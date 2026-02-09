@@ -6,6 +6,7 @@ from app import create_app
 from config import Config
 from app.database import Database
 from app.ai_client import get_ai_client
+from background.scheduler import BackgroundScheduler
 
 # Validate configuration
 print("=" * 60)
@@ -31,9 +32,16 @@ print("=" * 60 + "\n")
 # Create and run Flask app
 app = create_app()
 
+# Start background processes
+scheduler = BackgroundScheduler()
+scheduler.start_all()
+
 if __name__ == "__main__":
-    app.run(
-        host=Config.HOST,
-        port=Config.PORT,
-        debug=Config.DEBUG
-    )
+    try:
+        app.run(
+            host=Config.HOST,
+            port=Config.PORT,
+            debug=Config.DEBUG
+        )
+    finally:
+        scheduler.stop_all()

@@ -34,6 +34,7 @@ CREATE TABLE clients (
 CREATE TABLE projects (
     id SERIAL PRIMARY KEY,
     client_id INTEGER REFERENCES clients(id) ON DELETE CASCADE,
+    client_email VARCHAR(255), -- Direct email for quick access
     title VARCHAR(500) NOT NULL,
     description TEXT,
     category VARCHAR(100),
