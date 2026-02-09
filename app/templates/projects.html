@@ -1,0 +1,243 @@
+{% extends "base.html" %}
+
+{% block title %}Projects{% endblock %}
+
+{% block content %}
+<div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 2rem;">
+    <h2>Projects Management</h2>
+</div>
+
+<div id="alertContainer"></div>
+
+<!-- Filters -->
+<div class="card">
+    <div style="display: flex; gap: 1rem; flex-wrap: wrap;">
+        <select id="stateFilter" onchange="filterProjects()" style="padding: 0.5rem; border: 1px solid #ddd; border-radius: 4px;">
+            <option value="">All States</option>
+            <option value="NEW">New</option>
+            <option value="ANALYZED">Analyzed</option>
+            <option value="NEGOTIATION">Negotiation</option>
+            <option value="REQUIREMENTS_COLLECTION">Requirements Collection</option>
+            <option value="ESTIMATION_READY">Estimation Ready</option>
+            <option value="OFFER_SENT">Offer Sent</option>
+            <option value="AGREED">Agreed</option>
+            <option value="FUNDED">Funded</option>
+            <option value="EXECUTION_READY">Execution Ready</option>
+            <option value="CLOSED">Closed</option>
+        </select>
+        
+        <select id="complexityFilter" onchange="filterProjects()" style="padding: 0.5rem; border: 1px solid #ddd; border-radius: 4px;">
+            <option value="">All Complexity</option>
+            <option value="MICRO">Micro</option>
+            <option value="SMALL">Small</option>
+            <option value="MEDIUM">Medium</option>
+            <option value="LARGE">Large</option>
+            <option value="RND">R&D</option>
+        </select>
+        
+        <button class="btn" onclick="location.reload()">Refresh</button>
+    </div>
+</div>
+
+<!-- Projects Table -->
+<div class="card">
+    <table class="table">
+        <thead>
+            <tr>
+                <th>ID</th>
+                <th>Title</th>
+                <th>Client</th>
+                <th>State</th>
+                <th>Complexity</th>
+                <th>Budget</th>
+                <th>Created</th>
+                <th>Actions</th>
+            </tr>
+        </thead>
+        <tbody id="projectsTableBody">
+            {% for project in projects %}
+            <tr data-state="{{ project.current_state }}" data-complexity="{{ project.complexity or '' }}">
+                <td><strong>#{{ project.id }}</strong></td>
+                <td>{{ project.title[:50] }}{% if project.title|length > 50 %}...{% endif %}</td>
+                <td>{{ project.client_email or 'N/A' }}</td>
+                <td>
+                    <span class="badge badge-active">{{ project.current_state }}</span>
+                </td>
+                <td>{{ project.complexity or 'N/A' }}</td>
+                <td>${{ '%.2f'|format(project.quoted_price) if project.quoted_price else 'N/A' }}</td>
+                <td>{{ project.created_at.strftime('%Y-%m-%d') if project.created_at else 'N/A' }}</td>
+                <td>
+                    <button class="btn btn-secondary" style="padding: 0.25rem 0.75rem;" 
+                            onclick="viewProject({{ project.id }})">View</button>
+                </td>
+            </tr>
+            {% else %}
+            <tr>
+                <td colspan="8" style="text-align: center; color: #7f8c8d; padding: 2rem;">
+                    No projects yet. They will appear here automatically when emails are processed.
+                </td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+
+<!-- Project Details Modal -->
+<div id="projectModal" style="display: none; position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.5); z-index: 1000;">
+    <div style="max-width: 900px; margin: 2rem auto; background: white; border-radius: 8px; padding: 2rem; max-height: 90vh; overflow-y: auto;">
+        <h3 id="projectModalTitle">Project Details</h3>
+        <div id="projectDetails"></div>
+        <div style="margin-top: 2rem;">
+            <button class="btn btn-secondary" onclick="closeProjectModal()">Close</button>
+        </div>
+    </div>
+</div>
+
+{% endblock %}
+
+{% block extra_scripts %}
+<script>
+function showAlert(message, type = 'success') {
+    const alertDiv = document.createElement('div');
+    alertDiv.className = `alert alert-${type}`;
+    alertDiv.textContent = message;
+    document.getElementById('alertContainer').appendChild(alertDiv);
+    setTimeout(() => alertDiv.remove(), 5000);
+}
+
+function filterProjects() {
+    const stateFilter = document.getElementById('stateFilter').value;
+    const complexityFilter = document.getElementById('complexityFilter').value;
+    const rows = document.querySelectorAll('#projectsTableBody tr');
+    
+    rows.forEach(row => {
+        const state = row.dataset.state;
+        const complexity = row.dataset.complexity;
+        
+        const stateMatch = !stateFilter || state === stateFilter;
+        const complexityMatch = !complexityFilter || complexity === complexityFilter;
+        
+        row.style.display = (stateMatch && complexityMatch) ? '' : 'none';
+    });
+}
+
+async function viewProject(id) {
+    try {
+        const response = await fetch(`/api/projects/${id}`);
+        const project = await response.json();
+        
+        if (project.error) {
+            showAlert(project.error, 'error');
+            return;
+        }
+        
+        document.getElementById('projectModalTitle').textContent = `Project #${project.id}: ${project.title}`;
+        
+        const details = `
+            <div style="display: grid; gap: 1.5rem;">
+                <div>
+                    <h4>Basic Information</h4>
+                    <p><strong>Client:</strong> ${project.client_name || 'N/A'} (${project.client_email || 'N/A'})</p>
+                    <p><strong>State:</strong> <span class="badge badge-active">${project.current_state}</span></p>
+                    <p><strong>Complexity:</strong> ${project.complexity || 'N/A'}</p>
+                    <p><strong>Category:</strong> ${project.category || 'N/A'}</p>
+                    <p><strong>Tech Stack:</strong> ${project.tech_stack ? (Array.isArray(project.tech_stack) ? project.tech_stack.join(', ') : project.tech_stack) : 'N/A'}</p>
+                </div>
+                
+                <div>
+                    <h4>Description</h4>
+                    <p>${project.description || 'No description provided'}</p>
+                </div>
+                
+                <div>
+                    <h4>Financial</h4>
+                    <p><strong>Budget Range:</strong> $${project.budget_min || '0'} - $${project.budget_max || '0'}</p>
+                    <p><strong>Estimated Hours:</strong> ${project.estimated_hours || 'N/A'}</p>
+                    <p><strong>Quoted Price:</strong> $${project.quoted_price || 'N/A'}</p>
+                    <p><strong>Final Price:</strong> $${project.final_price || 'N/A'}</p>
+                </div>
+                
+                ${project.requirements_doc ? `
+                <div>
+                    <h4>Requirements</h4>
+                    <pre style="background: #f5f5f5; padding: 1rem; border-radius: 4px; white-space: pre-wrap;">${project.requirements_doc}</pre>
+                </div>
+                ` : ''}
+                
+                ${project.messages && project.messages.length > 0 ? `
+                <div>
+                    <h4>Messages (${project.messages.length})</h4>
+                    ${project.messages.map(msg => `
+                        <div style="border-left: 3px solid ${msg.direction === 'inbound' ? '#3498db' : '#27ae60'}; padding-left: 1rem; margin-bottom: 1rem;">
+                            <p><strong>${msg.direction === 'inbound' ? '📩 Received' : '📤 Sent'}:</strong> ${msg.subject || 'No subject'}</p>
+                            <p style="color: #7f8c8d; font-size: 0.9rem;">${new Date(msg.created_at).toLocaleString()}</p>
+                        </div>
+                    `).join('')}
+                </div>
+                ` : ''}
+                
+                <div>
+                    <h4>Change State</h4>
+                    <select id="newState" style="width: 100%; padding: 0.5rem; margin-bottom: 0.5rem;">
+                        <option value="">-- Select New State --</option>
+                        <option value="NEW">New</option>
+                        <option value="ANALYZED">Analyzed</option>
+                        <option value="NEGOTIATION">Negotiation</option>
+                        <option value="REQUIREMENTS_COLLECTION">Requirements Collection</option>
+                        <option value="ESTIMATION_READY">Estimation Ready</option>
+                        <option value="OFFER_SENT">Offer Sent</option>
+                        <option value="AGREED">Agreed</option>
+                        <option value="FUNDED">Funded</option>
+                        <option value="EXECUTION_READY">Execution Ready</option>
+                        <option value="CLOSED">Closed</option>
+                    </select>
+                    <button class="btn btn-success" onclick="changeProjectState(${project.id})">Update State</button>
+                </div>
+            </div>
+        `;
+        
+        document.getElementById('projectDetails').innerHTML = details;
+        document.getElementById('projectModal').style.display = 'block';
+    } catch (error) {
+        showAlert('Failed to load project: ' + error.message, 'error');
+    }
+}
+
+async function changeProjectState(projectId) {
+    const newState = document.getElementById('newState').value;
+    if (!newState) {
+        showAlert('Please select a state', 'error');
+        return;
+    }
+    
+    try {
+        const response = await fetch(`/admin/projects/${projectId}/state`, {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({state: newState})
+        });
+        
+        const result = await response.json();
+        
+        if (response.ok) {
+            showAlert(result.message, 'success');
+            setTimeout(() => location.reload(), 1500);
+        } else {
+            showAlert(result.error, 'error');
+        }
+    } catch (error) {
+        showAlert('Error: ' + error.message, 'error');
+    }
+}
+
+function closeProjectModal() {
+    document.getElementById('projectModal').style.display = 'none';
+}
+
+document.getElementById('projectModal').addEventListener('click', function(e) {
+    if (e.target === this) {
+        closeProjectModal();
+    }
+});
+</script>
+{% endblock %}

@@ -1,0 +1,64 @@
+{% extends "base.html" %}
+
+{% block title %}Dashboard{% endblock %}
+
+{% block content %}
+<h2>Dashboard</h2>
+
+<div class="stats-grid">
+    <div class="stat-card">
+        <div class="value">{{ stats.total_projects }}</div>
+        <div class="label">Total Projects</div>
+    </div>
+    <div class="stat-card">
+        <div class="value">{{ stats.active_projects }}</div>
+        <div class="label">Active Projects</div>
+    </div>
+    <div class="stat-card">
+        <div class="value">{{ stats.total_clients }}</div>
+        <div class="label">Total Clients</div>
+    </div>
+    <div class="stat-card">
+        <div class="value">{{ stats.agent_count }}</div>
+        <div class="label">AI Agents</div>
+    </div>
+</div>
+
+<div class="card">
+    <h3>Recent Projects</h3>
+    <table class="table">
+        <thead>
+            <tr>
+                <th>ID</th>
+                <th>Title</th>
+                <th>State</th>
+                <th>Complexity</th>
+                <th>Created</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for project in recent_projects %}
+            <tr>
+                <td>{{ project.id }}</td>
+                <td>{{ project.title }}</td>
+                <td><span class="badge badge-active">{{ project.current_state }}</span></td>
+                <td>{{ project.complexity or 'N/A' }}</td>
+                <td>{{ project.created_at.strftime('%Y-%m-%d %H:%M') if project.created_at else 'N/A' }}</td>
+            </tr>
+            {% else %}
+            <tr>
+                <td colspan="5" style="text-align: center; color: #7f8c8d;">No projects yet</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+
+<div class="card">
+    <h3>System Status</h3>
+    <p><strong>Database:</strong> <span class="badge badge-active">Connected</span></p>
+    <p><strong>OpenAI API:</strong> <span class="badge badge-active">Connected</span></p>
+    <p><strong>Hourly Rate:</strong> ${{ settings.hourly_rate }}</p>
+    <p><strong>Auto Negotiation:</strong> {{ 'Enabled' if settings.auto_negotiation else 'Disabled' }}</p>
+</div>
+{% endblock %}

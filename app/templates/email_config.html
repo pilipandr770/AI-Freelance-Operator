@@ -1,0 +1,253 @@
+{% extends "base.html" %}
+
+{% block title %}Email Configuration{% endblock %}
+
+{% block content %}
+<h2>Email Configuration</h2>
+
+<div id="alertContainer"></div>
+
+<!-- Current Status -->
+<div class="card">
+    <h3>Connection Status</h3>
+    <div style="display: grid; gap: 1rem;">
+        <div>
+            <strong>Gmail IMAP:</strong> 
+            <span id="imapStatus" class="badge badge-inactive">Not Configured</span>
+        </div>
+        <div>
+            <strong>Configured Email:</strong> 
+            <span id="configuredEmail">{{ current_email or 'Not set' }}</span>
+        </div>
+        <div>
+            <strong>Auto-check Interval:</strong> 
+            <span>{{ check_interval }} seconds</span>
+        </div>
+    </div>
+</div>
+
+<!-- Configuration Form -->
+<div class="card">
+    <h3>Gmail IMAP Configuration</h3>
+    <p style="color: #7f8c8d; margin-bottom: 1.5rem;">
+        Connect your Gmail account to automatically receive and process project inquiries.
+    </p>
+    
+    <form id="emailConfigForm" onsubmit="saveEmailConfig(event)">
+        <div class="form-group">
+            <label for="mailUsername">Gmail Address *</label>
+            <input type="email" id="mailUsername" name="mailUsername" required 
+                   placeholder="your.email@gmail.com" value="{{ current_email or '' }}">
+            <small style="color: #7f8c8d;">Your Gmail address</small>
+        </div>
+        
+        <div class="form-group">
+            <label for="mailPassword">Gmail App Password * (16 characters)</label>
+            <input type="password" id="mailPassword" name="mailPassword" 
+                   placeholder="xxxx xxxx xxxx xxxx" maxlength="19"
+                   pattern="[a-z]{4}\s[a-z]{4}\s[a-z]{4}\s[a-z]{4}">
+            <small style="color: #7f8c8d;">
+                App Password (not your regular Gmail password). 
+                <a href="https://myaccount.google.com/apppasswords" target="_blank" style="color: #3498db;">
+                    🔗 Get App Password here
+                </a>
+            </small>
+        </div>
+        
+        <div class="form-group">
+            <label for="checkInterval">Check Interval (seconds)</label>
+            <input type="number" id="checkInterval" name="checkInterval" 
+                   value="{{ check_interval }}" min="60" max="3600">
+            <small style="color: #7f8c8d;">How often to check for new emails (60-3600 seconds)</small>
+        </div>
+        
+        <div style="display: flex; gap: 1rem; margin-top: 1.5rem;">
+            <button type="submit" class="btn btn-success">Save Configuration</button>
+            <button type="button" class="btn btn-secondary" onclick="testConnection()">Test Connection</button>
+        </div>
+    </form>
+</div>
+
+<!-- Setup Instructions -->
+<div class="card">
+    <h3>📖 Setup Instructions</h3>
+    
+    <h4 style="margin-top: 1rem;">1. Enable 2-Factor Authentication</h4>
+    <p>Go to your <a href="https://myaccount.google.com/security" target="_blank">Google Account Security</a> and enable 2-Step Verification.</p>
+    
+    <h4 style="margin-top: 1rem;">2. Generate App Password</h4>
+    <ol style="margin-left: 1.5rem; line-height: 1.8;">
+        <li>Visit <a href="https://myaccount.google.com/apppasswords" target="_blank" style="color: #3498db;">Google App Passwords</a></li>
+        <li>Select "Mail" as the app</li>
+        <li>Select "Other" as device and name it "AI Freelance Operator"</li>
+        <li>Click "Generate"</li>
+        <li>Copy the 16-character password (format: xxxx xxxx xxxx xxxx)</li>
+        <li>Paste it in the form above</li>
+    </ol>
+    
+    <h4 style="margin-top: 1rem;">3. Enable IMAP in Gmail</h4>
+    <ol style="margin-left: 1.5rem; line-height: 1.8;">
+        <li>Open <a href="https://mail.google.com/mail/u/0/#settings/fwdandpop" target="_blank" style="color: #3498db;">Gmail Settings</a></li>
+        <li>Go to "Forwarding and POP/IMAP" tab</li>
+        <li>Enable IMAP access</li>
+        <li>Save changes</li>
+    </ol>
+    
+    <div style="background: #d1ecf1; padding: 1rem; border-radius: 4px; margin-top: 1rem; border: 1px solid #bee5eb;">
+        <strong style="color: #0c5460;">💡 Security Note:</strong>
+        <p style="color: #0c5460; margin-top: 0.5rem;">
+            App Passwords are more secure than using your regular Gmail password. 
+            They can be revoked at any time without changing your main password.
+        </p>
+    </div>
+</div>
+
+<!-- SMTP Configuration -->
+<div class="card">
+    <h3>📤 SMTP Configuration (Sending Emails)</h3>
+    <p style="color: #7f8c8d; margin-bottom: 1.5rem;">
+        Configure outgoing email settings. Usually uses the same credentials as IMAP.
+    </p>
+    
+    <form id="smtpConfigForm" onsubmit="saveSmtpConfig(event)">
+        <div class="form-group">
+            <label for="smtpUsername">SMTP Username</label>
+            <input type="email" id="smtpUsername" name="smtpUsername" 
+                   placeholder="Same as IMAP email" value="{{ current_email or '' }}">
+        </div>
+        
+        <div class="form-group">
+            <label for="smtpPassword">SMTP Password</label>
+            <input type="password" id="smtpPassword" name="smtpPassword" 
+                   placeholder="Same as IMAP App Password">
+            <small style="color: #7f8c8d;">Usually the same App Password as IMAP</small>
+        </div>
+        
+        <div style="display: flex; gap: 1rem; margin-top: 1.5rem;">
+            <button type="submit" class="btn btn-success">Save SMTP Config</button>
+        </div>
+    </form>
+</div>
+
+{% endblock %}
+
+{% block extra_scripts %}
+<script>
+function showAlert(message, type = 'success') {
+    const alertDiv = document.createElement('div');
+    alertDiv.className = `alert alert-${type}`;
+    alertDiv.textContent = message;
+    document.getElementById('alertContainer').appendChild(alertDiv);
+    setTimeout(() => alertDiv.remove(), 5000);
+}
+
+// Auto-format App Password input (add spaces)
+document.getElementById('mailPassword').addEventListener('input', function(e) {
+    let value = e.target.value.replace(/\s/g, '').toLowerCase();
+    let formatted = '';
+    for (let i = 0; i < value.length && i < 16; i++) {
+        if (i > 0 && i % 4 === 0) formatted += ' ';
+        formatted += value[i];
+    }
+    e.target.value = formatted;
+});
+
+async function saveEmailConfig(event) {
+    event.preventDefault();
+    
+    const data = {
+        mail_username: document.getElementById('mailUsername').value,
+        mail_password: document.getElementById('mailPassword').value.replace(/\s/g, ''),
+        check_interval: document.getElementById('checkInterval').value
+    };
+    
+    if (data.mail_password && data.mail_password.length !== 16) {
+        showAlert('App Password must be exactly 16 characters', 'error');
+        return;
+    }
+    
+    try {
+        const response = await fetch('/admin/email/config', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify(data)
+        });
+        
+        const result = await response.json();
+        
+        if (response.ok) {
+            showAlert(result.message, 'success');
+            setTimeout(() => location.reload(), 1500);
+        } else {
+            showAlert(result.error, 'error');
+        }
+    } catch (error) {
+        showAlert('Error: ' + error.message, 'error');
+    }
+}
+
+async function saveSmtpConfig(event) {
+    event.preventDefault();
+    
+    const data = {
+        smtp_username: document.getElementById('smtpUsername').value,
+        smtp_password: document.getElementById('smtpPassword').value.replace(/\s/g, '')
+    };
+    
+    try {
+        const response = await fetch('/admin/email/smtp', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify(data)
+        });
+        
+        const result = await response.json();
+        
+        if (response.ok) {
+            showAlert(result.message, 'success');
+        } else {
+            showAlert(result.error, 'error');
+        }
+    } catch (error) {
+        showAlert('Error: ' + error.message, 'error');
+    }
+}
+
+async function testConnection() {
+    showAlert('Testing connection...', 'success');
+    
+    try {
+        const response = await fetch('/admin/email/test', {
+            method: 'POST'
+        });
+        
+        const result = await response.json();
+        
+        if (response.ok) {
+            showAlert('✓ Connection successful! IMAP is working.', 'success');
+            document.getElementById('imapStatus').className = 'badge badge-active';
+            document.getElementById('imapStatus').textContent = 'Connected';
+        } else {
+            showAlert('✗ Connection failed: ' + result.error, 'error');
+        }
+    } catch (error) {
+        showAlert('Error testing connection: ' + error.message, 'error');
+    }
+}
+
+// Check current status on load
+window.addEventListener('load', async function() {
+    try {
+        const response = await fetch('/admin/email/status');
+        const status = await response.json();
+        
+        if (status.configured) {
+            document.getElementById('imapStatus').className = 'badge badge-active';
+            document.getElementById('imapStatus').textContent = 'Configured';
+        }
+    } catch (error) {
+        console.error('Failed to check status:', error);
+    }
+});
+</script>
+{% endblock %}

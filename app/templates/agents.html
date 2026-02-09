@@ -1,0 +1,215 @@
+{% extends "base.html" %}
+
+{% block title %}AI Agents{% endblock %}
+
+{% block content %}
+<div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 2rem;">
+    <h2>AI Agent Instructions</h2>
+    <button class="btn btn-success" onclick="showAddModal()">+ Add New Agent</button>
+</div>
+
+<div id="alertContainer"></div>
+
+<div class="card">
+    <p style="color: #7f8c8d; margin-bottom: 1.5rem;">
+        Manage instructions and prompts for each AI agent. These control how agents analyze projects, 
+        negotiate with clients, and make decisions.
+    </p>
+    
+    <table class="table">
+        <thead>
+            <tr>
+                <th>Agent Name</th>
+                <th>Status</th>
+                <th>Version</th>
+                <th>Last Updated</th>
+                <th>Actions</th>
+            </tr>
+        </thead>
+        <tbody id="agentsTableBody">
+            {% for agent in agents %}
+            <tr>
+                <td><strong>{{ agent.agent_name }}</strong></td>
+                <td>
+                    {% if agent.is_active %}
+                    <span class="badge badge-active">Active</span>
+                    {% else %}
+                    <span class="badge badge-inactive">Inactive</span>
+                    {% endif %}
+                </td>
+                <td>v{{ agent.version }}</td>
+                <td>{{ agent.updated_at.strftime('%Y-%m-%d %H:%M') if agent.updated_at else 'N/A' }}</td>
+                <td>
+                    <button class="btn btn-secondary" style="padding: 0.25rem 0.75rem; margin-right: 0.5rem;" 
+                            onclick="editAgent({{ agent.id }})">Edit</button>
+                    <button class="btn btn-danger" style="padding: 0.25rem 0.75rem;" 
+                            onclick="toggleAgent({{ agent.id }}, {{ 'false' if agent.is_active else 'true' }})">
+                        {{ 'Deactivate' if agent.is_active else 'Activate' }}
+                    </button>
+                </td>
+            </tr>
+            {% else %}
+            <tr>
+                <td colspan="5" style="text-align: center; color: #7f8c8d;">No agents configured yet</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+
+<!-- Add/Edit Modal -->
+<div id="agentModal" style="display: none; position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.5); z-index: 1000;">
+    <div style="max-width: 800px; margin: 2rem auto; background: white; border-radius: 8px; padding: 2rem; max-height: 90vh; overflow-y: auto;">
+        <h3 id="modalTitle">Edit Agent Instructions</h3>
+        <form id="agentForm" onsubmit="saveAgent(event)">
+            <input type="hidden" id="agentId">
+            
+            <div class="form-group">
+                <label for="agentName">Agent Name *</label>
+                <input type="text" id="agentName" name="agentName" required 
+                       placeholder="e.g., email_parser, scam_filter">
+            </div>
+            
+            <div class="form-group">
+                <label for="systemPrompt">System Prompt *</label>
+                <textarea id="systemPrompt" name="systemPrompt" required 
+                          placeholder="You are an expert... Define the agent's role and capabilities."
+                          style="min-height: 100px;"></textarea>
+                <small style="color: #7f8c8d;">The main identity and role of the agent</small>
+            </div>
+            
+            <div class="form-group">
+                <label for="instructionText">Instruction Text *</label>
+                <textarea id="instructionText" name="instructionText" required 
+                          placeholder="Detailed instructions on what the agent should do..."
+                          style="min-height: 200px;"></textarea>
+                <small style="color: #7f8c8d;">Specific tasks and behaviors for the agent</small>
+            </div>
+            
+            <div class="form-group">
+                <label>
+                    <input type="checkbox" id="isActive" name="isActive" checked>
+                    Active
+                </label>
+            </div>
+            
+            <div style="display: flex; gap: 1rem; margin-top: 1.5rem;">
+                <button type="submit" class="btn btn-success">Save Agent</button>
+                <button type="button" class="btn btn-secondary" onclick="closeModal()">Cancel</button>
+            </div>
+        </form>
+    </div>
+</div>
+
+{% endblock %}
+
+{% block extra_scripts %}
+<script>
+function showAlert(message, type = 'success') {
+    const alertDiv = document.createElement('div');
+    alertDiv.className = `alert alert-${type}`;
+    alertDiv.textContent = message;
+    
+    const container = document.getElementById('alertContainer');
+    container.appendChild(alertDiv);
+    
+    setTimeout(() => alertDiv.remove(), 5000);
+}
+
+function showAddModal() {
+    document.getElementById('modalTitle').textContent = 'Add New Agent';
+    document.getElementById('agentForm').reset();
+    document.getElementById('agentId').value = '';
+    document.getElementById('agentModal').style.display = 'block';
+}
+
+function closeModal() {
+    document.getElementById('agentModal').style.display = 'none';
+}
+
+async function editAgent(id) {
+    try {
+        const response = await fetch(`/admin/agents/${id}`);
+        const agent = await response.json();
+        
+        document.getElementById('modalTitle').textContent = 'Edit Agent Instructions';
+        document.getElementById('agentId').value = agent.id;
+        document.getElementById('agentName').value = agent.agent_name;
+        document.getElementById('systemPrompt').value = agent.system_prompt || '';
+        document.getElementById('instructionText').value = agent.instruction_text || '';
+        document.getElementById('isActive').checked = agent.is_active;
+        
+        document.getElementById('agentModal').style.display = 'block';
+    } catch (error) {
+        showAlert('Failed to load agent data: ' + error.message, 'error');
+    }
+}
+
+async function saveAgent(event) {
+    event.preventDefault();
+    
+    const id = document.getElementById('agentId').value;
+    const data = {
+        agent_name: document.getElementById('agentName').value,
+        system_prompt: document.getElementById('systemPrompt').value,
+        instruction_text: document.getElementById('instructionText').value,
+        is_active: document.getElementById('isActive').checked
+    };
+    
+    try {
+        const url = id ? `/admin/agents/${id}` : '/admin/agents';
+        const method = id ? 'PUT' : 'POST';
+        
+        const response = await fetch(url, {
+            method: method,
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify(data)
+        });
+        
+        const result = await response.json();
+        
+        if (response.ok) {
+            showAlert(result.message || 'Agent saved successfully', 'success');
+            closeModal();
+            setTimeout(() => location.reload(), 1000);
+        } else {
+            showAlert(result.error || 'Failed to save agent', 'error');
+        }
+    } catch (error) {
+        showAlert('Error: ' + error.message, 'error');
+    }
+}
+
+async function toggleAgent(id, activate) {
+    if (!confirm(`Are you sure you want to ${activate ? 'activate' : 'deactivate'} this agent?`)) {
+        return;
+    }
+    
+    try {
+        const response = await fetch(`/admin/agents/${id}/toggle`, {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({is_active: activate})
+        });
+        
+        const result = await response.json();
+        
+        if (response.ok) {
+            showAlert(result.message, 'success');
+            setTimeout(() => location.reload(), 1000);
+        } else {
+            showAlert(result.error, 'error');
+        }
+    } catch (error) {
+        showAlert('Error: ' + error.message, 'error');
+    }
+}
+
+// Close modal on outside click
+document.getElementById('agentModal').addEventListener('click', function(e) {
+    if (e.target === this) {
+        closeModal();
+    }
+});
+</script>
+{% endblock %}

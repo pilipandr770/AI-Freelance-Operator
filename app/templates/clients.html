@@ -1,0 +1,223 @@
+{% extends "base.html" %}
+
+{% block title %}Clients{% endblock %}
+
+{% block content %}
+<h2>Client Management</h2>
+
+<div id="alertContainer"></div>
+
+<div class="card">
+    <table class="table">
+        <thead>
+            <tr>
+                <th>ID</th>
+                <th>Name</th>
+                <th>Email</th>
+                <th>Company</th>
+                <th>Projects</th>
+                <th>Total Paid</th>
+                <th>Reputation</th>
+                <th>Status</th>
+                <th>Actions</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for client in clients %}
+            <tr>
+                <td><strong>#{{ client.id }}</strong></td>
+                <td>{{ client.name or 'N/A' }}</td>
+                <td>{{ client.email }}</td>
+                <td>{{ client.company or 'N/A' }}</td>
+                <td>{{ client.total_projects }}</td>
+                <td>${{ '%.2f'|format(client.total_paid) }}</td>
+                <td>{{ '%.1f'|format(client.reputation_score * 100) }}%</td>
+                <td>
+                    {% if client.is_blacklisted %}
+                    <span class="badge badge-inactive">Blacklisted</span>
+                    {% else %}
+                    <span class="badge badge-active">Active</span>
+                    {% endif %}
+                </td>
+                <td>
+                    <button class="btn btn-secondary" style="padding: 0.25rem 0.75rem;" 
+                            onclick="viewClient({{ client.id }})">View</button>
+                    {% if not client.is_blacklisted %}
+                    <button class="btn btn-danger" style="padding: 0.25rem 0.75rem;" 
+                            onclick="blacklistClient({{ client.id }})">Block</button>
+                    {% else %}
+                    <button class="btn btn-success" style="padding: 0.25rem 0.75rem;" 
+                            onclick="unblacklistClient({{ client.id }})">Unblock</button>
+                    {% endif %}
+                </td>
+            </tr>
+            {% else %}
+            <tr>
+                <td colspan="9" style="text-align: center; color: #7f8c8d; padding: 2rem;">
+                    No clients yet. They will be created automatically from incoming emails.
+                </td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+
+<!-- Client Details Modal -->
+<div id="clientModal" style="display: none; position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.5); z-index: 1000;">
+    <div style="max-width: 800px; margin: 2rem auto; background: white; border-radius: 8px; padding: 2rem; max-height: 90vh; overflow-y: auto;">
+        <h3 id="clientModalTitle">Client Details</h3>
+        <div id="clientDetails"></div>
+        <div style="margin-top: 2rem;">
+            <button class="btn btn-secondary" onclick="closeClientModal()">Close</button>
+        </div>
+    </div>
+</div>
+
+{% endblock %}
+
+{% block extra_scripts %}
+<script>
+function showAlert(message, type = 'success') {
+    const alertDiv = document.createElement('div');
+    alertDiv.className = `alert alert-${type}`;
+    alertDiv.textContent = message;
+    document.getElementById('alertContainer').appendChild(alertDiv);
+    setTimeout(() => alertDiv.remove(), 5000);
+}
+
+async function viewClient(id) {
+    try {
+        const response = await fetch(`/admin/clients/${id}`);
+        const client = await response.json();
+        
+        if (client.error) {
+            showAlert(client.error, 'error');
+            return;
+        }
+        
+        document.getElementById('clientModalTitle').textContent = `${client.name || client.email}`;
+        
+        const details = `
+            <div style="display: grid; gap: 1.5rem;">
+                <div>
+                    <h4>Contact Information</h4>
+                    <p><strong>Email:</strong> ${client.email}</p>
+                    <p><strong>Name:</strong> ${client.name || 'N/A'}</p>
+                    <p><strong>Company:</strong> ${client.company || 'N/A'}</p>
+                    <p><strong>Country:</strong> ${client.country || 'N/A'}</p>
+                    <p><strong>Timezone:</strong> ${client.timezone || 'N/A'}</p>
+                </div>
+                
+                <div>
+                    <h4>Statistics</h4>
+                    <p><strong>Total Projects:</strong> ${client.total_projects}</p>
+                    <p><strong>Successful Projects:</strong> ${client.successful_projects}</p>
+                    <p><strong>Total Paid:</strong> $${client.total_paid.toFixed(2)}</p>
+                    <p><strong>Reputation Score:</strong> ${(client.reputation_score * 100).toFixed(0)}%</p>
+                </div>
+                
+                ${client.is_blacklisted ? `
+                <div style="background: #f8d7da; padding: 1rem; border-radius: 4px; border: 1px solid #f5c6cb;">
+                    <h4 style="color: #721c24; margin-bottom: 0.5rem;">⚠️ Blacklisted</h4>
+                    <p style="color: #721c24;"><strong>Reason:</strong> ${client.blacklist_reason || 'No reason provided'}</p>
+                </div>
+                ` : ''}
+                
+                ${client.notes ? `
+                <div>
+                    <h4>Notes</h4>
+                    <p style="white-space: pre-wrap;">${client.notes}</p>
+                </div>
+                ` : ''}
+                
+                ${client.projects && client.projects.length > 0 ? `
+                <div>
+                    <h4>Projects (${client.projects.length})</h4>
+                    <table class="table" style="margin-top: 0.5rem;">
+                        <thead>
+                            <tr>
+                                <th>ID</th>
+                                <th>Title</th>
+                                <th>State</th>
+                                <th>Price</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            ${client.projects.map(p => `
+                                <tr>
+                                    <td>#${p.id}</td>
+                                    <td>${p.title}</td>
+                                    <td><span class="badge badge-active">${p.current_state}</span></td>
+                                    <td>$${p.quoted_price || 'N/A'}</td>
+                                </tr>
+                            `).join('')}
+                        </tbody>
+                    </table>
+                </div>
+                ` : ''}
+            </div>
+        `;
+        
+        document.getElementById('clientDetails').innerHTML = details;
+        document.getElementById('clientModal').style.display = 'block';
+    } catch (error) {
+        showAlert('Failed to load client: ' + error.message, 'error');
+    }
+}
+
+async function blacklistClient(id) {
+    const reason = prompt('Enter reason for blacklisting:');
+    if (!reason) return;
+    
+    try {
+        const response = await fetch(`/admin/clients/${id}/blacklist`, {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({blacklist: true, reason: reason})
+        });
+        
+        const result = await response.json();
+        
+        if (response.ok) {
+            showAlert(result.message, 'success');
+            setTimeout(() => location.reload(), 1000);
+        } else {
+            showAlert(result.error, 'error');
+        }
+    } catch (error) {
+        showAlert('Error: ' + error.message, 'error');
+    }
+}
+
+async function unblacklistClient(id) {
+    try {
+        const response = await fetch(`/admin/clients/${id}/blacklist`, {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({blacklist: false})
+        });
+        
+        const result = await response.json();
+        
+        if (response.ok) {
+            showAlert(result.message, 'success');
+            setTimeout(() => location.reload(), 1000);
+        } else {
+            showAlert(result.error, 'error');
+        }
+    } catch (error) {
+        showAlert('Error: ' + error.message, 'error');
+    }
+}
+
+function closeClientModal() {
+    document.getElementById('clientModal').style.display = 'none';
+}
+
+document.getElementById('clientModal').addEventListener('click', function(e) {
+    if (e.target === this) {
+        closeClientModal();
+    }
+});
+</script>
+{% endblock %}
