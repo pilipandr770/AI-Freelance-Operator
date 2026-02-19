@@ -6,6 +6,7 @@ import json
 from app.agents.base import BaseAgent
 from app.database import Database, QueryHelper
 from app.telegram_notifier import get_notifier
+from app.freelancer_client import get_freelancer_client
 
 
 class OfferGeneratorAgent(BaseAgent):
@@ -71,8 +72,8 @@ class OfferGeneratorAgent(BaseAgent):
                 self.update_project_field(project_id, 'technical_spec', proposal_text)
 
             if is_freelancer:
-                # Send bid via Telegram (can't email noreply@freelancer.com)
-                self._send_freelancer_bid(
+                # Try auto-submit via Selenium; fallback to Telegram
+                self._submit_or_notify_bid(
                     project_id, title, quoted_price, freelancer_url, proposal_text
                 )
             else:
@@ -106,7 +107,7 @@ class OfferGeneratorAgent(BaseAgent):
             )
             self.update_project_field(project_id, 'technical_spec', fallback_text)
             if is_freelancer:
-                self._send_freelancer_bid(
+                self._submit_or_notify_bid(
                     project_id, title, quoted_price, freelancer_url, fallback_text
                 )
             else:
@@ -152,18 +153,43 @@ class OfferGeneratorAgent(BaseAgent):
         except Exception as e:
             print(f"Error storing offer message: {e}")
 
-    def _send_freelancer_bid(self, project_id, title, price, url, bid_text):
-        """Send completed bid to owner via Telegram (freelancer.com projects can't be emailed)."""
+    def _submit_or_notify_bid(self, project_id, title, price, url, bid_text):
+        """Try auto-submit on freelancer.com; always notify via Telegram."""
+        from config import Config
+        from app.telegram_notifier import _esc
+        tg = get_notifier()
+
+        auto_submitted = False
+        auto_msg = ''
+
+        # ── Attempt Selenium auto-submit ──
         try:
-            tg = get_notifier()
-            # Escape HTML for Telegram
-            from app.telegram_notifier import _esc
+            client = get_freelancer_client()
+            if client.enabled and url:
+                days = int(getattr(Config, 'FREELANCER_DEFAULT_DAYS', 7))
+                ok, auto_msg = client.submit_bid(url, amount=price, days=days, proposal_text=bid_text)
+                auto_submitted = ok
+        except Exception as e:
+            auto_msg = str(e)
+            print(f"[OfferGenerator] Selenium bid error: {e}")
+
+        # ── Telegram notification (always) ──
+        try:
+            if auto_submitted:
+                status_line = f"✅ <b>Бид автоматически подан!</b>\n<i>{_esc(auto_msg)}</i>"
+            else:
+                status_line = (
+                    f"⚠️ <b>Автоподача не выполнена</b> ({_esc(auto_msg or 'disabled')})\n"
+                    f"Скопируйте текст ниже и подайте вручную."
+                )
+
             msg = (
                 f"📋 <b>Бид готов — проект #{project_id}</b>\n\n"
+                f"{status_line}\n\n"
                 f"<b>{_esc(title)}</b>\n"
                 f"💰 <b>Цена:</b> ${price:.0f}\n"
                 f"🔗 <a href=\"{url}\">Открыть на freelancer.com</a>\n\n"
-                f"<b>Текст для копирования:</b>\n"
+                f"<b>Текст бида:</b>\n"
                 f"<code>{_esc(bid_text[:3000])}</code>"
             )
             tg.send(msg)

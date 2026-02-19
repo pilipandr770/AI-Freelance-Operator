@@ -20,6 +20,10 @@ BeautifulSoup4==4.12.2
 # Telegram Bot
 python-telegram-bot==20.7
 
+# Browser Automation (optional — for auto-bidding on freelancer.com)
+selenium>=4.15.0
+undetected-chromedriver>=3.5.4
+
 # Utilities
 requests==2.31.0
 python-dateutil==2.8.2

@@ -52,6 +52,12 @@ class Config:
     TELEGRAM_BOT_TOKEN = os.getenv('TELEGRAM_BOT_TOKEN')
     TELEGRAM_OWNER_ID = os.getenv('TELEGRAM_OWNER_ID')
     
+    # Freelancer.com Auto-Bidding (optional — requires Chrome)
+    FREELANCER_LOGIN = os.getenv('FREELANCER_LOGIN', '')
+    FREELANCER_PASSWORD = os.getenv('FREELANCER_PASSWORD', '')
+    FREELANCER_HEADLESS = os.getenv('FREELANCER_HEADLESS', 'true')   # 'false' to see browser
+    FREELANCER_DEFAULT_DAYS = int(os.getenv('FREELANCER_DEFAULT_DAYS', '7'))
+    
     # System Settings (defaults, can be overridden in DB)
     HOURLY_RATE = float(os.getenv('HOURLY_RATE', '50.0'))
     AUTO_NEGOTIATION_ENABLED = os.getenv('AUTO_NEGOTIATION_ENABLED', 'True').lower() == 'true'
