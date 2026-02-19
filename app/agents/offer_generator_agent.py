@@ -98,12 +98,15 @@ class OfferGeneratorAgent(BaseAgent):
         except Exception as e:
             self.log_action(project_id, "OFFER_GENERATION_FAILED", error_message=str(e), success=False)
             # Fallback: generate a simple offer so pipeline doesn't get stuck
+            from config import Config
             stack_str = ', '.join(tech_stack[:3]) if tech_stack else 'relevant technologies'
             fallback_text = (
-                f"Hello,\n\nI'm interested in your project \"{title}\".\n"
+                f"Hello,\n\nI'm {Config.BUSINESS_OWNER} from {Config.BUSINESS_NAME}. "
+                f"I'm interested in your project \"{title}\".\n"
                 f"I have experience with {stack_str} and can complete this "
                 f"in approximately {estimated_hours:.0f} hours for ${quoted_price:.0f}.\n"
-                f"I'd love to discuss the details.\n\nBest regards"
+                f"I'd love to discuss the details.\n\n"
+                f"{Config.get_signature()}"
             )
             self.update_project_field(project_id, 'technical_spec', fallback_text)
             if is_freelancer:
@@ -196,10 +199,30 @@ class OfferGeneratorAgent(BaseAgent):
         except Exception as e:
             print(f"[OfferGenerator] Telegram bid notify error: {e}")
 
+    def _get_identity(self):
+        """Get business identity from config."""
+        from config import Config
+        return {
+            'name': Config.BUSINESS_OWNER,
+            'company': Config.BUSINESS_NAME,
+            'website': Config.BUSINESS_WEBSITE,
+            'email': Config.BUSINESS_EMAIL,
+            'phone': Config.BUSINESS_PHONE,
+            'address': Config.BUSINESS_ADDRESS,
+            'vat': Config.BUSINESS_VAT,
+            'signature': Config.get_signature(),
+        }
+
     def _freelancer_bid_prompt(self, title, description, tech_stack, hours, price, hourly_rate, complexity):
         """Generate prompt for freelancer.com bid message."""
+        me = self._get_identity()
         return f"""
 Generate a concise and compelling bid message for a freelancer.com project.
+
+ABOUT ME:
+- Name: {me['name']}, company {me['company']}
+- Based in Frankfurt am Main, Germany
+- Website: {me['website']}
 
 Project Title: {title}
 Description: {description}
@@ -210,11 +233,13 @@ My Hourly Rate: ${hourly_rate}/hour
 
 Rules:
 - 150-300 words, professional but friendly
+- Write from MY perspective (I am {me['name']} from {me['company']})
 - Show understanding of the project requirements
 - Highlight relevant experience with the required tech stack
 - Mention proposed timeline
 - DO NOT include formal proposal headers or legal terms
 - End with invitation to discuss
+- Sign off with: {me['name']}, {me['company']} | {me['website']}
 
 Return JSON:
 {{
@@ -228,8 +253,17 @@ Return JSON:
                                  price, hourly_rate, prepayment, client_email,
                                  complexity, tasks):
         """Generate prompt for email commercial proposal."""
+        me = self._get_identity()
         return f"""
 Generate a professional commercial proposal for a freelance project.
+
+ABOUT ME (the freelancer sending this proposal):
+- Name: {me['name']}, company {me['company']}
+- Address: {me['address']}
+- Website: {me['website']}
+- Email: {me['email']}
+- Phone: {me['phone']}
+- VAT ID: {me['vat']}
 
 Project Title: {title}
 Description: {description}
@@ -247,10 +281,16 @@ Task Breakdown:
 Generate a complete commercial proposal in plain text (not markdown). The proposal should be professional,
 clear, and ready to send to the client via email.
 
+IMPORTANT:
+- Write from MY perspective (I am {me['name']} from {me['company']})
+- End the proposal with this exact signature block:
+
+{me['signature']}
+
 Return JSON:
 {{
     "subject": "email subject line for the proposal",
-    "proposal_text": "full text of the proposal email",
+    "proposal_text": "full text of the proposal email including the signature at the end",
     "summary": {{
         "total_price": {price},
         "prepayment_amount": {price * prepayment / 100},

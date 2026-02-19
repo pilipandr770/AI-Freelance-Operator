@@ -229,6 +229,10 @@ class WorkflowEngine:
                 except Exception:
                     pass
 
+            elif to_state == 'CLARIFICATION_NEEDED':
+                # RequirementsAnalysisAgent sends its own telegram notification
+                pass
+
             elif to_state == 'REQUIREMENTS_ANALYZED':
                 # RequirementsAnalysisAgent sends its own detailed Telegram analysis
                 pass
@@ -275,6 +279,7 @@ class WorkflowEngine:
                 {'state': 'PARSED', 'agent': 'scam_filter_agent', 'description': 'Check for scam/fraud/illegal'},
                 {'state': 'ANALYZED', 'agent': 'classification_agent', 'description': 'Classify complexity, tech stack'},
                 {'state': 'CLASSIFIED', 'agent': 'requirements_analysis_agent', 'description': 'Analyse requirements clarity, generate questions'},
+                {'state': 'CLARIFICATION_NEEDED', 'agent': None, 'description': 'Waiting for client to answer clarification questions'},
                 {'state': 'REQUIREMENTS_ANALYZED', 'agent': 'estimation_agent', 'description': 'Estimate hours and cost'},
                 {'state': 'ESTIMATION_READY', 'agent': 'offer_generator_agent', 'description': 'Generate commercial proposal'},
                 {'state': 'OFFER_SENT', 'agent': None, 'description': 'Waiting for client response'},

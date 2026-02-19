@@ -17,6 +17,7 @@ STATE_MACHINE = {
     'PARSED':           {'agent': ScamFilterAgent,            'next': 'ANALYZED'},
     'ANALYZED':         {'agent': ClassificationAgent,        'next': 'CLASSIFIED'},
     'CLASSIFIED':       {'agent': RequirementsAnalysisAgent,  'next': 'REQUIREMENTS_ANALYZED'},
+    'CLARIFICATION_NEEDED': {'agent': None,                    'next': 'CLASSIFIED'},  # waits for client reply
     'REQUIREMENTS_ANALYZED': {'agent': EstimationAgent,       'next': 'ESTIMATION_READY'},
     'ESTIMATION_READY': {'agent': OfferGeneratorAgent,        'next': 'OFFER_SENT'},
     'OFFER_SENT':       {'agent': None,                       'next': 'NEGOTIATION'},  # waits for client

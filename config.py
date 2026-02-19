@@ -69,6 +69,41 @@ class Config:
     MIN_PROJECT_BUDGET = float(os.getenv('MIN_PROJECT_BUDGET', '100'))
     MAX_PROJECT_BUDGET = float(os.getenv('MAX_PROJECT_BUDGET', '50000'))
     
+    # Business Identity (used in proposals & email signatures)
+    BUSINESS_NAME = os.getenv('BUSINESS_NAME', 'AndriiIT')
+    BUSINESS_OWNER = os.getenv('BUSINESS_OWNER', 'Andrii Pylypchuk')
+    BUSINESS_ADDRESS = os.getenv('BUSINESS_ADDRESS', '')
+    BUSINESS_EMAIL = os.getenv('BUSINESS_EMAIL', '')
+    BUSINESS_PHONE = os.getenv('BUSINESS_PHONE', '')
+    BUSINESS_VAT = os.getenv('BUSINESS_VAT', '')
+    BUSINESS_WEBSITE = os.getenv('BUSINESS_WEBSITE', '')
+    BUSINESS_IBAN = os.getenv('BUSINESS_IBAN', '')
+    BUSINESS_BIC = os.getenv('BUSINESS_BIC', '')
+
+    @staticmethod
+    def get_signature():
+        """Return formatted email signature block."""
+        lines = [
+            f'--',
+            f'{Config.BUSINESS_OWNER}',
+            f'{Config.BUSINESS_NAME}',
+        ]
+        if Config.BUSINESS_ADDRESS:
+            lines.append(Config.BUSINESS_ADDRESS)
+        if Config.BUSINESS_WEBSITE:
+            lines.append(f'Web: {Config.BUSINESS_WEBSITE}')
+        if Config.BUSINESS_EMAIL:
+            lines.append(f'E-Mail: {Config.BUSINESS_EMAIL}')
+        if Config.BUSINESS_PHONE:
+            lines.append(f'Tel: {Config.BUSINESS_PHONE}')
+        if Config.BUSINESS_VAT:
+            lines.append(f'USt-IdNr.: {Config.BUSINESS_VAT}')
+        if Config.BUSINESS_IBAN:
+            lines.append(f'IBAN: {Config.BUSINESS_IBAN}')
+        if Config.BUSINESS_BIC:
+            lines.append(f'BIC: {Config.BUSINESS_BIC}')
+        return '\n'.join(lines)
+    
     @staticmethod
     def validate():
         """Validate required configuration"""

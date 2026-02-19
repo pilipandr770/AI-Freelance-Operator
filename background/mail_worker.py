@@ -184,6 +184,9 @@ class MailWorker:
 
             # If project is in OFFER_SENT state, move to NEGOTIATION
             self._check_offer_response(existing_project_id, body)
+
+            # If project is waiting for clarification, move back to CLASSIFIED
+            self._check_clarification_response(existing_project_id, body)
             return True
         else:
             # Create new project
@@ -266,6 +269,34 @@ class MailWorker:
                         pass
         except Exception as e:
             print(f"[MailWorker] Error updating project state: {e}")
+
+    def _check_clarification_response(self, project_id, body=''):
+        """If project is in CLARIFICATION_NEEDED, client replied — re-analyse requirements."""
+        try:
+            with Database.get_cursor() as cursor:
+                cursor.execute("""
+                    UPDATE projects SET current_state = 'CLASSIFIED', updated_at = NOW()
+                    WHERE id = %s AND current_state = 'CLARIFICATION_NEEDED'
+                """, (project_id,))
+                if cursor.rowcount > 0:
+                    cursor.execute("""
+                        INSERT INTO project_states (project_id, from_state, to_state, changed_by, reason)
+                        VALUES (%s, 'CLARIFICATION_NEEDED', 'CLASSIFIED', 'mail_worker',
+                                'Client replied to clarification questions — re-analysing')
+                    """, (project_id,))
+                    print(f"[MailWorker] Project #{project_id}: CLARIFICATION_NEEDED → CLASSIFIED (client replied)")
+
+                    try:
+                        cursor.execute("SELECT title, client_email FROM projects WHERE id = %s", (project_id,))
+                        proj = cursor.fetchone()
+                        if proj:
+                            get_notifier().notify_client_reply(
+                                project_id, proj['title'], proj['client_email'], body[:200] if body else ''
+                            )
+                    except Exception:
+                        pass
+        except Exception as e:
+            print(f"[MailWorker] Error checking clarification response: {e}")
 
     def _handle_freelancer_digest(self, body, message_id):
         """Parse a freelancer.com digest email and create multiple projects."""

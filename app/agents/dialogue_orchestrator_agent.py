@@ -7,6 +7,7 @@ import json
 from app.agents.base import BaseAgent
 from app.database import Database, QueryHelper
 from app.telegram_notifier import get_notifier
+from config import Config
 
 
 class DialogueOrchestratorAgent(BaseAgent):
@@ -66,6 +67,7 @@ class DialogueOrchestratorAgent(BaseAgent):
 
         prompt = f"""
 You are a professional freelance developer managing client communication.
+You represent {Config.BUSINESS_NAME} ({Config.OWNER}).
 
 Project: {title}
 Quoted Price: ${quoted_price}
@@ -84,6 +86,8 @@ Analyze the client's message and decide:
 3. If client REJECTS / is not interested → set decision = "REJECTED"
 4. If client asks questions → set decision = "QUESTION" and answer
 5. If max negotiation rounds reached → set decision = "ESCALATE"
+
+IMPORTANT: Write reply_text in plain text (not markdown). Do NOT add a signature — it will be appended automatically.
 
 Return JSON:
 {{
@@ -196,14 +200,15 @@ Return JSON:
             print(f"Error marking message processed: {e}")
 
     def _store_reply(self, project_id, client_email, subject, body):
-        """Store an outbound reply message"""
+        """Store an outbound reply message with business signature"""
         try:
-            mail_username = QueryHelper.get_system_setting('mail_username', '')
+            full_body = f"{body}\n\n{Config.get_signature()}"
+            mail_username = QueryHelper.get_system_setting('mail_username', Config.BUSINESS_EMAIL)
             with Database.get_cursor() as cursor:
                 cursor.execute("""
                     INSERT INTO project_messages 
                     (project_id, direction, sender_email, recipient_email, subject, body, is_processed)
                     VALUES (%s, 'outbound', %s, %s, %s, %s, FALSE)
-                """, (project_id, mail_username, client_email, subject, body))
+                """, (project_id, mail_username, client_email, subject, full_body))
         except Exception as e:
             print(f"Error storing reply: {e}")
