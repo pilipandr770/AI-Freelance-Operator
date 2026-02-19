@@ -32,9 +32,13 @@ print("=" * 60 + "\n")
 # Create and run Flask app
 app = create_app()
 
-# Start background processes
-scheduler = BackgroundScheduler()
-scheduler.start_all()
+# Start background processes only once (avoid duplicates in debug/reloader mode)
+import os
+if os.environ.get('WERKZEUG_RUN_MAIN') == 'true' or not Config.DEBUG:
+    scheduler = BackgroundScheduler()
+    scheduler.start_all()
+else:
+    scheduler = None
 
 if __name__ == "__main__":
     try:
@@ -44,4 +48,5 @@ if __name__ == "__main__":
             debug=Config.DEBUG
         )
     finally:
-        scheduler.stop_all()
+        if scheduler:
+            scheduler.stop_all()

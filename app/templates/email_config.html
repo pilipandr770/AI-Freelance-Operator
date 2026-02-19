@@ -24,6 +24,17 @@
             <span>{{ check_interval }} seconds</span>
         </div>
     </div>
+    {% if current_email %}
+    <div style="margin-top: 1.5rem; padding-top: 1rem; border-top: 1px solid #eee;">
+        <button type="button" class="btn btn-danger" onclick="disconnectEmail()"
+                style="display: inline-flex; align-items: center; gap: 0.5rem;">
+            🔌 Disconnect Email
+        </button>
+        <small style="color: #7f8c8d; margin-left: 0.5rem;">
+            Clears credentials. System will stop reading and sending emails.
+        </small>
+    </div>
+    {% endif %}
 </div>
 
 <!-- Configuration Form -->
@@ -249,5 +260,25 @@ window.addEventListener('load', async function() {
         console.error('Failed to check status:', error);
     }
 });
+
+async function disconnectEmail() {
+    if (!confirm('Disconnect email? The system will stop checking for new emails and sending replies until you connect a new one.')) {
+        return;
+    }
+    try {
+        const response = await fetch('/admin/email/disconnect', {
+            method: 'POST'
+        });
+        const result = await response.json();
+        if (response.ok) {
+            showAlert('Email disconnected. Connect a new one below.', 'success');
+            setTimeout(() => location.reload(), 1500);
+        } else {
+            showAlert(result.error, 'error');
+        }
+    } catch (error) {
+        showAlert('Error: ' + error.message, 'error');
+    }
+}
 </script>
 {% endblock %}

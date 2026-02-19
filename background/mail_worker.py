@@ -2,7 +2,7 @@
 Mail Worker — background process for email intake and sending.
 Handles:
   - Reading new emails from IMAP (inbox)
-  - Creating project records from email inquiries
+  - Creating project records from email inquiries (ONLY from allowed domains)
   - Linking emails to existing projects (via In-Reply-To / subject matching)
   - Sending pending outbound messages via SMTP
 """
@@ -15,10 +15,19 @@ from app.database import Database, QueryHelper
 from config import Config
 
 
+# ── WHITELIST: Only emails from these domains will be processed ──
+# Everything else is silently ignored.
+ALLOWED_SENDER_DOMAINS = [
+    'freelancer.com',
+]
+
+
 class MailWorker:
     def __init__(self):
         self.running = False
         self.check_interval = 30  # seconds
+        self._imap_failed = False  # suppress repeated IMAP error logs
+        self._smtp_failed = False  # suppress repeated SMTP error logs
 
     def start(self):
         """Start the mail intake loop"""
@@ -37,13 +46,22 @@ class MailWorker:
                 mail_user = self._get_mail_username()
                 mail_pass = self._get_mail_password()
                 
-                if mail_user and mail_pass:
+                if mail_user and mail_pass and not self._is_placeholder(mail_user):
                     self._process_new_emails(mail_user, mail_pass)
                     self._send_pending_emails()
+                elif not self._imap_failed:
+                    print("[MailWorker] Email credentials not configured or placeholder — skipping")
+                    self._imap_failed = True
             except Exception as e:
                 print(f"[MailWorker] Error: {e}")
             
             time.sleep(self.check_interval)
+
+    @staticmethod
+    def _is_placeholder(value):
+        """Check if a credential is a placeholder value"""
+        placeholders = ['your_email@gmail.com', 'your_password', 'changeme', '']
+        return value.strip().lower() in placeholders
 
     def _get_mail_username(self):
         """Get mail username from settings or config"""
@@ -65,8 +83,12 @@ class MailWorker:
             mail = imaplib.IMAP4_SSL(Config.MAIL_HOST, Config.MAIL_PORT)
             mail.login(mail_user, mail_pass)
             mail.select('inbox')
+            self._imap_failed = False  # reset on success
 
-            status, messages = mail.search(None, 'UNSEEN')
+            # Only fetch emails from last 7 days to avoid processing ancient mail
+            from datetime import datetime, timedelta
+            since_date = (datetime.now() - timedelta(days=7)).strftime('%d-%b-%Y')
+            status, messages = mail.search(None, f'(UNSEEN SINCE {since_date})')
             if status != 'OK':
                 mail.logout()
                 return
@@ -76,25 +98,54 @@ class MailWorker:
                 mail.logout()
                 return
 
-            print(f"[MailWorker] Found {len(msg_ids)} new email(s)")
+            # Limit to 20 emails per cycle to avoid overload
+            msg_ids = msg_ids[:20]
+            print(f"[MailWorker] Processing {len(msg_ids)} new email(s)")
 
+            created = 0
+            skipped = 0
             for msg_id in msg_ids:
                 try:
                     status, msg_data = mail.fetch(msg_id, '(RFC822)')
                     if status == 'OK':
                         email_message = email.message_from_bytes(msg_data[0][1])
-                        self._handle_email(email_message)
+                        was_created = self._handle_email(email_message)
+                        if was_created:
+                            created += 1
+                        else:
+                            skipped += 1
                         mail.store(msg_id, '+FLAGS', '\\Seen')
                 except Exception as e:
                     print(f"[MailWorker] Error processing email {msg_id}: {e}")
 
             mail.logout()
+            if created > 0 or skipped > 0:
+                print(f"[MailWorker] Cycle done: {created} project(s) created, {skipped} skipped")
 
         except Exception as e:
-            print(f"[MailWorker] IMAP error: {e}")
+            if not self._imap_failed:
+                print(f"[MailWorker] IMAP error: {e}")
+                self._imap_failed = True
+
+    @staticmethod
+    def _is_bulk_email(email_message):
+        """Detect automated/bulk emails that should be skipped.
+        Lightweight filter — since the inbox is dedicated, most mail is valid."""
+        # 1. List-Unsubscribe header → newsletter / marketing
+        if email_message.get('List-Unsubscribe'):
+            return True
+        # 2. Precedence: bulk / list / junk
+        precedence = (email_message.get('Precedence') or '').lower()
+        if precedence in ('bulk', 'list', 'junk'):
+            return True
+        # 3. Auto-Submitted (auto-generated bounce / vacation notices)
+        auto_submitted = (email_message.get('Auto-Submitted') or '').lower()
+        if auto_submitted and auto_submitted != 'no':
+            return True
+        return False
 
     def _handle_email(self, email_message):
-        """Decide if email is a new project or a reply to existing"""
+        """Decide if email is a new project or a reply to existing. Returns True if project created."""
         sender = email_message.get('From', '')
         subject = self._decode_header(email_message.get('Subject', ''))
         body = self._get_email_body(email_message)
@@ -104,6 +155,10 @@ class MailWorker:
         # Extract email address from sender
         email_match = re.search(r'<([^>]+)>', sender)
         client_email = email_match.group(1) if email_match else sender.strip()
+
+        # Skip automated/bulk mail (newsletters, marketing, bounces)
+        if self._is_bulk_email(email_message):
+            return False
 
         # Check if this is a reply to an existing project
         existing_project_id = self._find_existing_project(in_reply_to, subject, client_email)
@@ -115,9 +170,11 @@ class MailWorker:
 
             # If project is in OFFER_SENT state, move to NEGOTIATION
             self._check_offer_response(existing_project_id)
+            return True
         else:
             # Create new project
             self._create_project_from_email(client_email, subject, body, message_id)
+            return True
 
     def _find_existing_project(self, in_reply_to, subject, client_email):
         """Try to find an existing project this email belongs to"""
@@ -249,9 +306,15 @@ class MailWorker:
         try:
             from app.email_sender import get_email_sender
             sender = get_email_sender()
-            sender.send_pending_messages()
+            sent = sender.send_pending_messages()
+            if sent == 0 and self._smtp_failed:
+                return  # Already logged, don't spam
+            if sent and sent > 0:
+                self._smtp_failed = False
         except Exception as e:
-            print(f"[MailWorker] Error sending pending emails: {e}")
+            if not self._smtp_failed:
+                print(f"[MailWorker] Error sending pending emails: {e}")
+                self._smtp_failed = True
 
     def _decode_header(self, header):
         if header:

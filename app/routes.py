@@ -738,6 +738,19 @@ def email_status():
         return jsonify({"error": str(e)}), 500
 
 
+@main.route("/admin/email/disconnect", methods=["POST"])
+def disconnect_email():
+    """Disconnect current email — clears IMAP & SMTP credentials."""
+    try:
+        # Clear all email-related settings
+        for key in ['mail_username', 'mail_password', 'smtp_username', 'smtp_password']:
+            QueryHelper.set_system_setting(key, '', 'string')
+
+        return jsonify({"success": True, "message": "Email disconnected. System will stop checking mail."})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
 # ============================================================================
 # WORKFLOW PIPELINE ROUTES
 # ============================================================================

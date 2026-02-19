@@ -77,24 +77,48 @@ class WorkflowEngine:
         processable_states = list(self.agents.keys())
         processed_count = 0
 
+        # Separate states that always auto-process from states that need triggers
+        auto_states = [s for s in processable_states if s != 'NEGOTIATION']
+        event_states = [s for s in processable_states if s == 'NEGOTIATION']
+
         try:
             with Database.get_cursor() as cursor:
-                # Get projects in states we can process
-                placeholders = ', '.join(['%s'] * len(processable_states))
-                cursor.execute(f"""
-                    SELECT id, current_state, client_email, title, description, 
-                           tech_stack, budget_min, budget_max, complexity,
-                           estimated_hours, quoted_price
-                    FROM projects
-                    WHERE current_state IN ({placeholders})
-                    ORDER BY created_at ASC
-                    LIMIT 20
-                """, tuple(processable_states))
+                # Get projects in auto-processable states
+                all_projects = []
+                if auto_states:
+                    placeholders = ', '.join(['%s'] * len(auto_states))
+                    cursor.execute(f"""
+                        SELECT id, current_state, client_email, title, description, 
+                               tech_stack, budget_min, budget_max, complexity,
+                               estimated_hours, quoted_price
+                        FROM projects
+                        WHERE current_state IN ({placeholders})
+                        ORDER BY created_at ASC
+                        LIMIT 20
+                    """, tuple(auto_states))
+                    all_projects.extend(cursor.fetchall())
 
-                projects = cursor.fetchall()
+                # Only fetch NEGOTIATION projects that have unprocessed inbound messages
+                if event_states:
+                    cursor.execute("""
+                        SELECT p.id, p.current_state, p.client_email, p.title, 
+                               p.description, p.tech_stack, p.budget_min, p.budget_max, 
+                               p.complexity, p.estimated_hours, p.quoted_price,
+                               p.created_at
+                        FROM projects p
+                        WHERE p.current_state = 'NEGOTIATION'
+                          AND EXISTS (
+                              SELECT 1 FROM project_messages pm
+                              WHERE pm.project_id = p.id
+                                AND pm.direction = 'inbound' AND pm.is_processed = FALSE
+                          )
+                        ORDER BY p.created_at ASC
+                        LIMIT 10
+                    """)
+                    all_projects.extend(cursor.fetchall())
 
             # Process each project (outside the cursor context)
-            for project in projects:
+            for project in all_projects:
                 if not self.running:
                     break
                 

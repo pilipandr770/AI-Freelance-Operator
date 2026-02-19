@@ -83,18 +83,23 @@ class EmailSender:
         """
         Send all pending outbound messages from the project_messages table.
         Called periodically by the background scheduler.
+        Returns number of messages sent.
         """
         try:
             with Database.get_cursor() as cursor:
-                # Get unsent outbound messages
+                # Get unsent outbound messages that have a valid recipient
                 cursor.execute("""
                     SELECT id, project_id, recipient_email, subject, body, html_body
                     FROM project_messages
                     WHERE direction = 'outbound' AND is_processed = FALSE
+                      AND recipient_email IS NOT NULL AND recipient_email != ''
                     ORDER BY created_at ASC
                     LIMIT 10
                 """)
                 messages = cursor.fetchall()
+
+            if not messages:
+                return 0
 
             sent_count = 0
             for msg in messages:
