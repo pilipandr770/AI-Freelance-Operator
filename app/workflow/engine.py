@@ -18,6 +18,7 @@ from app.agents.classification_agent import ClassificationAgent
 from app.agents.estimation_agent import EstimationAgent
 from app.agents.offer_generator_agent import OfferGeneratorAgent
 from app.agents.dialogue_orchestrator_agent import DialogueOrchestratorAgent
+from app.telegram_notifier import get_notifier
 
 
 # Terminal states — no further processing
@@ -156,6 +157,10 @@ class WorkflowEngine:
                     """, (new_state, project_id))
 
                 print(f"[WorkflowEngine] Project #{project_id}: {current_state} → {new_state}")
+
+                # ── Telegram notifications on key transitions ──
+                self._notify_transition(project_id, current_state, new_state, project)
+
                 return True
             else:
                 # Agent returned None or same state — no transition
@@ -176,6 +181,77 @@ class WorkflowEngine:
             except Exception:
                 pass
             return False
+
+    def _notify_transition(self, project_id, from_state, to_state, project_data):
+        """Send Telegram notification for important state transitions."""
+        try:
+            tg = get_notifier()
+            title = project_data.get('title', f'Project #{project_id}')
+            client_email = project_data.get('client_email', '')
+
+            if to_state == 'REJECTED':
+                # Get rejection reason from DB
+                try:
+                    with Database.get_cursor() as cursor:
+                        cursor.execute("SELECT rejection_reason FROM projects WHERE id = %s", (project_id,))
+                        row = cursor.fetchone()
+                        reason = row['rejection_reason'] if row else 'Unknown'
+                except Exception:
+                    reason = 'Unknown'
+                tg.notify_rejected(project_id, title, reason)
+
+            elif to_state == 'ANALYZED':
+                scam_score = 0.0
+                try:
+                    with Database.get_cursor() as cursor:
+                        cursor.execute("SELECT scam_score FROM projects WHERE id = %s", (project_id,))
+                        row = cursor.fetchone()
+                        scam_score = float(row['scam_score'] or 0) if row else 0
+                except Exception:
+                    pass
+                tg.notify_analyzed(project_id, title, scam_score)
+
+            elif to_state == 'CLASSIFIED':
+                try:
+                    with Database.get_cursor() as cursor:
+                        cursor.execute("""SELECT complexity, tech_stack, estimated_hours 
+                                         FROM projects WHERE id = %s""", (project_id,))
+                        row = cursor.fetchone()
+                        if row:
+                            tg.notify_classified(
+                                project_id, title,
+                                row.get('complexity', '?'),
+                                row.get('tech_stack') or [],
+                                float(row.get('estimated_hours') or 0)
+                            )
+                except Exception:
+                    pass
+
+            elif to_state == 'ESTIMATION_READY':
+                try:
+                    with Database.get_cursor() as cursor:
+                        cursor.execute("""SELECT estimated_hours, quoted_price 
+                                         FROM projects WHERE id = %s""", (project_id,))
+                        row = cursor.fetchone()
+                        if row:
+                            tg.notify_estimation(
+                                project_id, title,
+                                float(row.get('estimated_hours') or 0),
+                                float(row.get('quoted_price') or 0)
+                            )
+                except Exception:
+                    pass
+
+            elif to_state == 'OFFER_SENT':
+                price = float(project_data.get('quoted_price') or 0)
+                tg.notify_offer_sent(project_id, title, price, client_email)
+
+            elif to_state == 'AGREED':
+                price = float(project_data.get('quoted_price') or 0)
+                tg.notify_agreed(project_id, title, price)
+
+        except Exception as e:
+            print(f"[WorkflowEngine] Telegram notify error: {e}")
 
     def get_pipeline_info(self):
         """Return info about the workflow pipeline (for admin UI)"""

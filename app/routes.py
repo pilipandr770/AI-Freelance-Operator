@@ -925,3 +925,54 @@ def test_smtp_connection():
             return jsonify({"error": message}), 400
     except Exception as e:
         return jsonify({"error": str(e)}), 500
+
+
+# ═══════════════════════════════════════════════════════════
+# TELEGRAM
+# ═══════════════════════════════════════════════════════════
+
+@main.route("/admin/telegram")
+def admin_telegram():
+    """Telegram bot configuration & testing page"""
+    from config import Config
+    configured = bool(Config.TELEGRAM_BOT_TOKEN and Config.TELEGRAM_OWNER_ID)
+    return render_template("telegram.html", configured=configured,
+                           owner_id=Config.TELEGRAM_OWNER_ID or '')
+
+
+@main.route("/admin/telegram/test", methods=["POST"])
+def test_telegram():
+    """Send a test message via Telegram"""
+    try:
+        from app.telegram_notifier import get_notifier
+        tg = get_notifier()
+        ok = tg.send("🤖 <b>AI Freelance Operator</b>\n\nТестовое сообщение. Telegram-уведомления работают!")
+        if ok:
+            return jsonify({"success": True, "message": "Тестовое сообщение отправлено!"})
+        else:
+            return jsonify({"error": "Не удалось отправить. Проверьте токен и ID."}), 400
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@main.route("/admin/telegram/status")
+def telegram_status():
+    """Check Telegram bot status"""
+    from config import Config
+    import requests as req
+    token = Config.TELEGRAM_BOT_TOKEN
+    if not token:
+        return jsonify({"connected": False, "error": "Token not set"})
+    try:
+        r = req.get(f"https://api.telegram.org/bot{token}/getMe", timeout=5)
+        if r.status_code == 200 and r.json().get('ok'):
+            bot_info = r.json()['result']
+            return jsonify({
+                "connected": True,
+                "bot_name": bot_info.get('first_name', ''),
+                "bot_username": bot_info.get('username', ''),
+                "owner_id": Config.TELEGRAM_OWNER_ID or ''
+            })
+        return jsonify({"connected": False, "error": r.json().get('description', 'Unknown error')})
+    except Exception as e:
+        return jsonify({"connected": False, "error": str(e)})

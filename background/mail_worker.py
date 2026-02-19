@@ -12,6 +12,7 @@ import imaplib
 import re
 from email.header import decode_header
 from app.database import Database, QueryHelper
+from app.telegram_notifier import get_notifier
 from config import Config
 
 
@@ -175,7 +176,7 @@ class MailWorker:
             print(f"[MailWorker] Added reply to project #{existing_project_id}")
 
             # If project is in OFFER_SENT state, move to NEGOTIATION
-            self._check_offer_response(existing_project_id)
+            self._check_offer_response(existing_project_id, body)
             return True
         else:
             # Create new project
@@ -231,7 +232,7 @@ class MailWorker:
         except Exception as e:
             print(f"[MailWorker] Error adding message: {e}")
 
-    def _check_offer_response(self, project_id):
+    def _check_offer_response(self, project_id, body=''):
         """If project is in OFFER_SENT, move to NEGOTIATION"""
         try:
             with Database.get_cursor() as cursor:
@@ -245,6 +246,17 @@ class MailWorker:
                         VALUES (%s, 'OFFER_SENT', 'NEGOTIATION', 'mail_worker', 'Client replied to offer')
                     """, (project_id,))
                     print(f"[MailWorker] Project #{project_id}: OFFER_SENT → NEGOTIATION (client replied)")
+
+                    # Notify owner: client replied!
+                    try:
+                        cursor.execute("SELECT title, client_email FROM projects WHERE id = %s", (project_id,))
+                        proj = cursor.fetchone()
+                        if proj:
+                            get_notifier().notify_client_reply(
+                                project_id, proj['title'], proj['client_email'], body[:200] if body else ''
+                            )
+                    except Exception:
+                        pass
         except Exception as e:
             print(f"[MailWorker] Error updating project state: {e}")
 
@@ -277,6 +289,9 @@ class MailWorker:
                 """, (project_id, client_email, subject, body, message_id))
 
             print(f"[MailWorker] Created project #{project_id}: {title}")
+
+            # Notify owner via Telegram
+            get_notifier().notify_new_project(project_id, title, client_email, description)
 
         except Exception as e:
             print(f"[MailWorker] Error creating project: {e}")

@@ -1,0 +1,166 @@
+{% extends "base.html" %}
+{% block title %}Telegram{% endblock %}
+
+{% block content %}
+<h2>📱 Telegram-уведомления</h2>
+
+<div class="card">
+    <h3>Статус подключения</h3>
+    <div id="tg-status" style="margin: 1rem 0;">
+        <span class="badge badge-inactive">Проверка...</span>
+    </div>
+    <div id="tg-details" style="display:none; margin-top: 1rem;">
+        <table class="table" style="max-width: 400px;">
+            <tr><td><strong>Бот</strong></td><td id="bot-name">—</td></tr>
+            <tr><td><strong>Username</strong></td><td id="bot-username">—</td></tr>
+            <tr><td><strong>Owner ID</strong></td><td>{{ owner_id }}</td></tr>
+        </table>
+    </div>
+</div>
+
+<div class="card">
+    <h3>Тестовое сообщение</h3>
+    <p style="margin-bottom: 1rem; color: #666;">
+        Отправьте тестовое сообщение, чтобы убедиться, что бот работает правильно.
+    </p>
+    <button class="btn btn-success" onclick="sendTest()" id="test-btn" {% if not configured %}disabled{% endif %}>
+        🚀 Отправить тест
+    </button>
+    <div id="test-result" style="margin-top: 1rem; display:none;"></div>
+</div>
+
+<div class="card">
+    <h3>Список уведомлений</h3>
+    <p style="margin-bottom: 1rem; color: #666;">
+        Система отправляет уведомления при следующих событиях:
+    </p>
+    <table class="table">
+        <thead>
+            <tr><th>Событие</th><th>Описание</th><th>Статус</th></tr>
+        </thead>
+        <tbody>
+            <tr>
+                <td>🆕 Новый проект</td>
+                <td>Получено письмо от freelancer.com, создан проект</td>
+                <td><span class="badge badge-active">Активно</span></td>
+            </tr>
+            <tr>
+                <td>🔍 Проверка</td>
+                <td>Проект прошёл scam-фильтр</td>
+                <td><span class="badge badge-active">Активно</span></td>
+            </tr>
+            <tr>
+                <td>🚫 Отклонён</td>
+                <td>Проект отклонён (скам / нерелевант)</td>
+                <td><span class="badge badge-active">Активно</span></td>
+            </tr>
+            <tr>
+                <td>📊 Классификация</td>
+                <td>Определена сложность, стек, категория</td>
+                <td><span class="badge badge-active">Активно</span></td>
+            </tr>
+            <tr>
+                <td>💰 Оценка</td>
+                <td>Рассчитаны часы и цена</td>
+                <td><span class="badge badge-active">Активно</span></td>
+            </tr>
+            <tr>
+                <td>📨 Оффер</td>
+                <td>Коммерческое предложение отправлено клиенту</td>
+                <td><span class="badge badge-active">Активно</span></td>
+            </tr>
+            <tr>
+                <td>💬 Ответ клиента</td>
+                <td>Клиент ответил на оффер → переговоры</td>
+                <td><span class="badge badge-active">Активно</span></td>
+            </tr>
+            <tr>
+                <td>✅ Сделка</td>
+                <td>Клиент согласился</td>
+                <td><span class="badge badge-active">Активно</span></td>
+            </tr>
+            <tr>
+                <td>⚠️ Эскалация</td>
+                <td>Достигнут лимит раундов переговоров, нужно ваше участие</td>
+                <td><span class="badge badge-active">Активно</span></td>
+            </tr>
+            <tr>
+                <td>🚨 Ошибки</td>
+                <td>Критические ошибки системы</td>
+                <td><span class="badge badge-active">Активно</span></td>
+            </tr>
+        </tbody>
+    </table>
+</div>
+
+{% if not configured %}
+<div class="card" style="border-left: 4px solid #e74c3c;">
+    <h3>⚠️ Настройка</h3>
+    <p>Telegram не настроен. Добавьте в файл <code>.env</code>:</p>
+    <pre style="background: #f8f9fa; padding: 1rem; border-radius: 4px; margin-top: 0.5rem;">
+TELEGRAM_BOT_TOKEN=your_bot_token_here
+TELEGRAM_OWNER_ID=your_telegram_id_here</pre>
+    <p style="margin-top: 1rem;">
+        1. Создайте бота через <strong>@BotFather</strong> в Telegram<br>
+        2. Скопируйте токен<br>
+        3. Узнайте свой ID через <strong>@userinfobot</strong><br>
+        4. Перезапустите сервер
+    </p>
+</div>
+{% endif %}
+
+{% endblock %}
+
+{% block extra_scripts %}
+<script>
+// Check Telegram status on page load
+window.addEventListener('DOMContentLoaded', function() {
+    fetch('/admin/telegram/status')
+        .then(r => r.json())
+        .then(data => {
+            const statusEl = document.getElementById('tg-status');
+            const detailsEl = document.getElementById('tg-details');
+            if (data.connected) {
+                statusEl.innerHTML = '<span class="badge badge-active">✅ Подключён</span>';
+                document.getElementById('bot-name').textContent = data.bot_name;
+                document.getElementById('bot-username').textContent = '@' + data.bot_username;
+                detailsEl.style.display = 'block';
+            } else {
+                statusEl.innerHTML = '<span class="badge badge-inactive">❌ Не подключён: ' + 
+                    (data.error || 'unknown') + '</span>';
+            }
+        })
+        .catch(() => {
+            document.getElementById('tg-status').innerHTML = 
+                '<span class="badge badge-inactive">❌ Ошибка проверки</span>';
+        });
+});
+
+function sendTest() {
+    const btn = document.getElementById('test-btn');
+    const result = document.getElementById('test-result');
+    btn.disabled = true;
+    btn.textContent = '⏳ Отправка...';
+    result.style.display = 'none';
+
+    fetch('/admin/telegram/test', { method: 'POST' })
+        .then(r => r.json())
+        .then(data => {
+            result.style.display = 'block';
+            if (data.success) {
+                result.innerHTML = '<div class="alert alert-success">✅ ' + data.message + '</div>';
+            } else {
+                result.innerHTML = '<div class="alert alert-error">❌ ' + (data.error || 'Ошибка') + '</div>';
+            }
+            btn.disabled = false;
+            btn.textContent = '🚀 Отправить тест';
+        })
+        .catch(err => {
+            result.style.display = 'block';
+            result.innerHTML = '<div class="alert alert-error">❌ Ошибка сети</div>';
+            btn.disabled = false;
+            btn.textContent = '🚀 Отправить тест';
+        });
+}
+</script>
+{% endblock %}

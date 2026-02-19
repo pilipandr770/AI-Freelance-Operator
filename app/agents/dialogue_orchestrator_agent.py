@@ -6,6 +6,7 @@ Stage: NEGOTIATION (handles replies, stays in NEGOTIATION or moves to AGREED/REJ
 import json
 from app.agents.base import BaseAgent
 from app.database import Database, QueryHelper
+from app.telegram_notifier import get_notifier
 
 
 class DialogueOrchestratorAgent(BaseAgent):
@@ -137,6 +138,10 @@ Return JSON:
                 # Too many rounds — needs human intervention
                 self.log_state_transition(project_id, 'NEGOTIATION', 'NEGOTIATION',
                                         'Max negotiation rounds reached — needs human review')
+                get_notifier().notify_escalate(
+                    project_id, title,
+                    f'Достигнут лимит переговоров ({max_rounds} раундов). Нужно ваше решение.'
+                )
                 return None
 
             return None  # Stay in NEGOTIATION
