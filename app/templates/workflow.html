@@ -1,0 +1,171 @@
+{% extends "base.html" %}
+{% block title %}Workflow Pipeline{% endblock %}
+{% block content %}
+<h2>🔄 Workflow Pipeline</h2>
+
+<div id="alertContainer"></div>
+
+<!-- Pipeline Visualization -->
+<div class="card" style="margin-bottom: 2rem;">
+    <h3>Pipeline States</h3>
+    <div style="display: flex; flex-wrap: wrap; gap: 0.5rem; align-items: center; margin-top: 1rem;">
+        {% for state in all_states %}
+        <div style="
+            padding: 0.5rem 1rem;
+            border-radius: 8px;
+            font-size: 0.85rem;
+            font-weight: 600;
+            text-align: center;
+            min-width: 120px;
+            {% if state in terminal_states %}
+                background: #fce4ec; color: #c62828; border: 2px solid #ef9a9a;
+            {% elif state in manual_states %}
+                background: #fff3e0; color: #e65100; border: 2px solid #ffcc80;
+            {% elif state in auto_states %}
+                background: #e8f5e9; color: #2e7d32; border: 2px solid #a5d6a7;
+            {% else %}
+                background: #e3f2fd; color: #1565c0; border: 2px solid #90caf9;
+            {% endif %}
+        ">
+            {{ state }}
+            <br>
+            <span style="font-size: 1.2rem; font-weight: 700;">{{ state_counts.get(state, 0) }}</span>
+        </div>
+        {% if not loop.last and state not in terminal_states %}
+        <span style="font-size: 1.2rem; color: #999;">→</span>
+        {% endif %}
+        {% endfor %}
+    </div>
+    <div style="margin-top: 1rem; font-size: 0.8rem; color: #666;">
+        <span style="background: #e8f5e9; padding: 2px 8px; border-radius: 4px;">🤖 Auto (agent)</span>
+        <span style="background: #fff3e0; padding: 2px 8px; border-radius: 4px; margin-left: 0.5rem;">👤 Manual</span>
+        <span style="background: #fce4ec; padding: 2px 8px; border-radius: 4px; margin-left: 0.5rem;">⏹ Terminal</span>
+    </div>
+</div>
+
+<!-- Agent-State Mapping -->
+<div class="card" style="margin-bottom: 2rem;">
+    <h3>Agent → State Mapping</h3>
+    <table class="table" style="margin-top: 1rem;">
+        <thead>
+            <tr>
+                <th>State</th>
+                <th>Agent</th>
+                <th>Type</th>
+                <th>Projects</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for state in all_states %}
+            <tr>
+                <td><strong>{{ state }}</strong></td>
+                <td>
+                    {% if state in auto_states %}
+                        <span class="badge badge-active">{{ state_machine[state]['agent'].__name__ if state_machine[state]['agent'] else '-' }}</span>
+                    {% else %}
+                        <span style="color: #999;">—</span>
+                    {% endif %}
+                </td>
+                <td>
+                    {% if state in terminal_states %}
+                        <span class="badge badge-inactive">Terminal</span>
+                    {% elif state in manual_states %}
+                        <span class="badge" style="background: #fff3e0; color: #e65100;">Manual</span>
+                    {% else %}
+                        <span class="badge badge-active">Auto</span>
+                    {% endif %}
+                </td>
+                <td>{{ state_counts.get(state, 0) }}</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+
+<!-- Recent State Transitions -->
+<div class="card" style="margin-bottom: 2rem;">
+    <h3>Recent State Transitions</h3>
+    <table class="table" style="margin-top: 1rem;">
+        <thead>
+            <tr>
+                <th>Time</th>
+                <th>Project</th>
+                <th>From</th>
+                <th>→</th>
+                <th>To</th>
+                <th>Changed By</th>
+                <th>Reason</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for t in transitions %}
+            <tr>
+                <td>{{ t.created_at.strftime('%m/%d %H:%M') if t.created_at else '-' }}</td>
+                <td>
+                    <a href="/admin/projects">
+                        #{{ t.project_id }}{% if t.project_title %} — {{ t.project_title[:30] }}{% endif %}
+                    </a>
+                </td>
+                <td><span class="badge" style="background: #ffebee; color: #c62828;">{{ t.from_state or '—' }}</span></td>
+                <td>→</td>
+                <td><span class="badge badge-active">{{ t.to_state }}</span></td>
+                <td>{{ t.changed_by or '-' }}</td>
+                <td style="max-width: 200px; overflow: hidden; text-overflow: ellipsis;">{{ t.reason or '-' }}</td>
+            </tr>
+            {% else %}
+            <tr>
+                <td colspan="7" style="text-align: center; color: #999;">No state transitions yet</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+
+<!-- Recent Agent Activity -->
+<div class="card">
+    <h3>Recent Agent Activity</h3>
+    <table class="table" style="margin-top: 1rem;">
+        <thead>
+            <tr>
+                <th>Time</th>
+                <th>Agent</th>
+                <th>Action</th>
+                <th>Project</th>
+                <th>Status</th>
+                <th>Time (ms)</th>
+                <th>Tokens</th>
+                <th>Cost</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for log in logs %}
+            <tr>
+                <td>{{ log.created_at.strftime('%m/%d %H:%M') if log.created_at else '-' }}</td>
+                <td><strong>{{ log.agent_name }}</strong></td>
+                <td>{{ log.action }}</td>
+                <td>
+                    {% if log.project_id %}
+                    <a href="/admin/projects">#{{ log.project_id }}{% if log.project_title %} — {{ log.project_title[:20] }}{% endif %}</a>
+                    {% else %}-{% endif %}
+                </td>
+                <td>
+                    {% if log.success %}
+                    <span class="badge badge-active">OK</span>
+                    {% else %}
+                    <span class="badge badge-inactive">FAIL</span>
+                    {% endif %}
+                </td>
+                <td>{{ log.execution_time_ms or '-' }}</td>
+                <td>{{ log.tokens_used or '-' }}</td>
+                <td>{{ '$%.4f'|format(log.cost) if log.cost else '-' }}</td>
+            </tr>
+            {% else %}
+            <tr>
+                <td colspan="8" style="text-align: center; color: #999;">No agent activity yet</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+
+{% endblock %}

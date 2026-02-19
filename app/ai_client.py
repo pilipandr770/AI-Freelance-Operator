@@ -98,6 +98,49 @@ class AIClient:
         
         return round(prompt_cost + completion_cost, 6)
     
+    def generate_response(self, prompt, system_prompt=None, temperature=None, max_tokens=None):
+        """
+        Simple interface: send a prompt, get text back.
+        
+        Args:
+            prompt: User prompt text
+            system_prompt: Optional system prompt
+            temperature: Override temperature
+            max_tokens: Override max tokens
+        
+        Returns:
+            str: AI response text
+        """
+        messages = []
+        if system_prompt:
+            messages.append({"role": "system", "content": system_prompt})
+        messages.append({"role": "user", "content": prompt})
+        
+        result = self.chat_completion(messages, temperature=temperature, max_tokens=max_tokens)
+        return result["content"]
+    
+    def generate_json_response(self, prompt, system_prompt=None):
+        """
+        Send a prompt and expect JSON back.
+        
+        Args:
+            prompt: User prompt text  
+            system_prompt: Optional system prompt
+        
+        Returns:
+            dict: Parsed JSON response or None
+        """
+        messages = []
+        if system_prompt:
+            messages.append({"role": "system", "content": system_prompt})
+        messages.append({"role": "user", "content": prompt})
+        
+        result = self.chat_completion(
+            messages, 
+            response_format={"type": "json_object"}
+        )
+        return self.parse_json_response(result["content"])
+
     def parse_json_response(self, content):
         """
         Parse JSON response from AI

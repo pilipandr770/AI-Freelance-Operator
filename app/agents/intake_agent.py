@@ -1,25 +1,28 @@
+"""
+Intake Agent — first touch: validates project has minimum data to proceed.
+Stage: (used as a quick pass-through or validation check)
+This agent is now replaced by EmailParserAgent for the NEW state.
+Kept for backward compatibility.
+"""
 from app.agents.base import BaseAgent
 
+
 class IntakeAgent(BaseAgent):
+    """Quick validation that a project has enough data to proceed."""
+
     def process(self, project_data):
-        """
-        Process new project intake
-        For now, just mark as ready for classification
-        In future, could parse email content, extract requirements, etc.
-        """
         project_id = project_data['id']
+        self.log_action(project_id, "INTAKE_CHECK")
 
-        # Log the intake processing
-        self.log_action(project_id, "INTAKE_STARTED", input_data=project_data)
+        description = project_data.get('description', '') or ''
+        title = project_data.get('title', '')
 
-        # For now, just move to classification state
-        # In a real implementation, this could:
-        # - Parse the original email
-        # - Extract key requirements
-        # - Validate project details
-        # - Set initial tech stack if possible
+        # Minimal validation
+        if not description and not title:
+            self.log_action(project_id, "INTAKE_REJECTED", 
+                          output_data={"reason": "No title or description"}, success=False)
+            self.update_project_field(project_id, 'rejection_reason', 'Empty project — no title or description')
+            return "REJECTED"
 
-        self.log_action(project_id, "INTAKE_COMPLETED", output_data={"next_state": "ANALYZED"})
-
-        # Return next state
-        return "ANALYZED"
+        self.log_action(project_id, "INTAKE_PASSED")
+        return "PARSED"

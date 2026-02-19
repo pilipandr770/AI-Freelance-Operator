@@ -1,65 +1,92 @@
-from app.agents.base import BaseAgent
+"""
+Classification Agent — classifies project complexity, tech stack, budget category.
+Stage: ANALYZED → CLASSIFIED
+"""
 import json
+from app.agents.base import BaseAgent
+
 
 class ClassificationAgent(BaseAgent):
+    """
+    Classifies projects by:
+    - Complexity (MICRO, SMALL, MEDIUM, LARGE, RND)
+    - Tech stack identification
+    - Budget category
+    - Timeline estimation
+    """
+
     def process(self, project_data):
-        """
-        Classify project: determine tech stack, budget category, priority
-        """
         project_id = project_data['id']
-        description = project_data['description'] or ""
+        description = project_data.get('description', '') or ''
+        title = project_data.get('title', '')
+        tech_stack = project_data.get('tech_stack', [])
+        budget_min = project_data.get('budget_min')
+        budget_max = project_data.get('budget_max')
 
-        self.log_action(project_id, "CLASSIFICATION_STARTED", input_data={"description": description})
+        self.log_action(project_id, "CLASSIFICATION_STARTED")
 
-        # Use AI to classify the project
-        classification_prompt = f"""
-        Analyze this freelance project description and classify it:
+        prompt = f"""
+Analyze this freelance project and classify it.
 
-        Project Description: {description}
+Project Title: {title}
+Description: {description}
+Existing Tech Stack: {tech_stack or 'Not specified'}
+Budget Range: {budget_min or '?'} - {budget_max or '?'}
 
-        Please provide:
-        1. Primary technology stack (as JSON array)
-        2. Budget category: LOW (<$1000), MEDIUM ($1000-$5000), HIGH (>$5000)
-        3. Project complexity: MICRO, SMALL, MEDIUM, LARGE, RND
-        4. Estimated timeline category: QUICK (1-2 weeks), STANDARD (1-3 months), LONG (>3 months)
+Classify:
+1. Complexity: MICRO (<4 hours), SMALL (4-20h), MEDIUM (20-80h), LARGE (80-200h), RND (needs research)
+2. Technology stack needed (be specific)
+3. Category of work
+4. Is this tech stack common/familiar for a full-stack developer?
 
-        Respond in JSON format:
-        {{
-            "tech_stack": ["tech1", "tech2"],
-            "budget_category": "MEDIUM",
-            "complexity": "SMALL",
-            "timeline": "STANDARD"
-        }}
-        """
+Return JSON:
+{{
+    "complexity": "SMALL",
+    "tech_stack": ["Python", "Flask", "PostgreSQL"],
+    "category": "web_development",
+    "is_familiar_stack": true,
+    "estimated_hours_min": 10,
+    "estimated_hours_max": 20,
+    "key_challenges": ["challenge1", "challenge2"],
+    "classification_notes": "brief notes"
+}}
+"""
 
         try:
-            response = self.ai_client.generate_response(classification_prompt)
-            # Parse JSON response
-            classification = json.loads(response.strip())
+            result = self.ai_json(prompt)
 
-            # Update project with classification results
-            tech_stack = classification.get('tech_stack', [])
-            complexity = classification.get('complexity', 'UNKNOWN')
+            usage = result.pop('_usage', {})
+            cost = result.pop('_cost', 0)
+            exec_time = result.pop('_execution_time_ms', 0)
 
-            # Update tech_stack if not already set
-            if not project_data['tech_stack']:
-                self.update_project_field(project_id, 'tech_stack', tech_stack)
+            # Update project fields
+            updates = {}
+            if result.get('complexity'):
+                updates['complexity'] = result['complexity']
+            if result.get('tech_stack'):
+                updates['tech_stack'] = result['tech_stack']
+            if result.get('category'):
+                updates['category'] = result['category']
+            if 'is_familiar_stack' in result:
+                updates['is_familiar_stack'] = result['is_familiar_stack']
+            if result.get('estimated_hours_min'):
+                updates['estimated_hours'] = float(result.get('estimated_hours_max', result['estimated_hours_min']))
 
-            # Update complexity
-            self.update_project_field(project_id, 'complexity', complexity)
+            if updates:
+                self.update_project_fields(project_id, **updates)
 
-            # Add classification metadata
-            output_data = {
-                "tech_stack": tech_stack,
-                "complexity": complexity,
-                "next_state": "NEGOTIATION"
-            }
-            self.log_action(project_id, "CLASSIFICATION_COMPLETED", output_data=output_data)
+            self.log_action(
+                project_id, "CLASSIFICATION_COMPLETED",
+                output_data=result,
+                execution_time_ms=exec_time,
+                tokens_used=usage.get('total_tokens'),
+                cost=cost
+            )
 
-            # Move to negotiation state
-            return "NEGOTIATION"
+            self.log_state_transition(project_id, 'ANALYZED', 'CLASSIFIED',
+                                      f"Complexity: {result.get('complexity', '?')}")
+            return "CLASSIFIED"
 
         except Exception as e:
             self.log_action(project_id, "CLASSIFICATION_FAILED", error_message=str(e), success=False)
-            # Stay in current state on error
             return None

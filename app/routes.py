@@ -5,7 +5,9 @@ Flask routes for AI Freelance Operator
 from flask import Blueprint, jsonify, request, render_template_string, render_template
 from app.database import Database, QueryHelper
 from app.ai_client import get_ai_client
+from app.workflow.dispatcher import STATE_MACHINE, ALL_STATES, AUTO_STATES, MANUAL_STATES, TERMINAL_STATES
 from config import Config
+import json
 
 main = Blueprint('main', __name__)
 
@@ -732,5 +734,181 @@ def email_status():
             "configured": configured,
             "email": mail_username if configured else None
         })
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+# ============================================================================
+# WORKFLOW PIPELINE ROUTES
+# ============================================================================
+
+@main.route("/api/workflow/pipeline")
+def get_workflow_pipeline():
+    """Get workflow pipeline info"""
+    from app.workflow.engine import WorkflowEngine
+    engine = WorkflowEngine()
+    return jsonify(engine.get_pipeline_info())
+
+
+@main.route("/api/workflow/stats")
+def get_workflow_stats():
+    """Get project counts by state"""
+    try:
+        with Database.get_cursor() as cursor:
+            cursor.execute("""
+                SELECT current_state, COUNT(*) as count
+                FROM projects
+                GROUP BY current_state
+                ORDER BY count DESC
+            """)
+            state_counts = {row['current_state']: row['count'] for row in cursor.fetchall()}
+            
+            cursor.execute("SELECT COUNT(*) as total FROM projects")
+            total = cursor.fetchone()['total']
+            
+            cursor.execute("""
+                SELECT COUNT(*) as count FROM projects 
+                WHERE current_state NOT IN ('CLOSED', 'REJECTED')
+            """)
+            active = cursor.fetchone()['count']
+        
+        return jsonify({
+            "total_projects": total,
+            "active_projects": active,
+            "by_state": state_counts,
+            "all_states": ALL_STATES,
+            "auto_states": AUTO_STATES,
+            "manual_states": MANUAL_STATES,
+            "terminal_states": TERMINAL_STATES
+        })
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@main.route("/admin/workflow")
+def admin_workflow():
+    """Workflow pipeline visualization page"""
+    try:
+        with Database.get_cursor() as cursor:
+            # State counts
+            cursor.execute("""
+                SELECT current_state, COUNT(*) as count
+                FROM projects
+                GROUP BY current_state
+            """)
+            state_counts = {row['current_state']: row['count'] for row in cursor.fetchall()}
+            
+            # Recent state transitions
+            cursor.execute("""
+                SELECT ps.*, p.title as project_title
+                FROM project_states ps
+                LEFT JOIN projects p ON ps.project_id = p.id  
+                ORDER BY ps.created_at DESC
+                LIMIT 50
+            """)
+            transitions = cursor.fetchall()
+            
+            # Recent agent logs
+            cursor.execute("""
+                SELECT al.*, p.title as project_title
+                FROM agent_logs al
+                LEFT JOIN projects p ON al.project_id = p.id
+                ORDER BY al.created_at DESC
+                LIMIT 30
+            """)
+            logs = cursor.fetchall()
+
+        return render_template('workflow.html',
+            state_counts=state_counts,
+            transitions=transitions,
+            logs=logs,
+            all_states=ALL_STATES,
+            auto_states=AUTO_STATES,
+            manual_states=MANUAL_STATES,
+            terminal_states=TERMINAL_STATES,
+            state_machine=STATE_MACHINE
+        )
+    except Exception as e:
+        return f"Error loading workflow: {str(e)}", 500
+
+
+@main.route("/api/projects/<int:project_id>/reprocess", methods=["POST"])
+def reprocess_project(project_id):
+    """Manually re-trigger agent processing for a project"""
+    try:
+        data = request.get_json() or {}
+        target_state = data.get('target_state')
+        
+        with Database.get_cursor() as cursor:
+            cursor.execute("SELECT id, current_state FROM projects WHERE id = %s", (project_id,))
+            project = cursor.fetchone()
+            
+            if not project:
+                return jsonify({"error": "Project not found"}), 404
+            
+            if target_state:
+                # Move to specified state
+                cursor.execute("""
+                    UPDATE projects SET current_state = %s, updated_at = NOW() WHERE id = %s
+                """, (target_state, project_id))
+                cursor.execute("""
+                    INSERT INTO project_states (project_id, from_state, to_state, changed_by, reason)
+                    VALUES (%s, %s, %s, 'admin', 'Manual state change')
+                """, (project_id, project['current_state'], target_state))
+        
+        return jsonify({"success": True, "message": f"Project state set to {target_state or project['current_state']}"})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@main.route("/api/projects/<int:project_id>/messages")
+def get_project_messages(project_id):
+    """Get all messages for a project"""
+    try:
+        with Database.get_cursor() as cursor:
+            cursor.execute("""
+                SELECT id, direction, sender_email, recipient_email, subject, body, 
+                       is_processed, created_at
+                FROM project_messages
+                WHERE project_id = %s
+                ORDER BY created_at ASC
+            """, (project_id,))
+            messages = cursor.fetchall()
+        
+        return jsonify({"messages": messages, "count": len(messages)})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@main.route("/api/projects/<int:project_id>/tasks")
+def get_project_tasks(project_id):
+    """Get all tasks for a project"""
+    try:
+        with Database.get_cursor() as cursor:
+            cursor.execute("""
+                SELECT id, title, description, estimated_hours, priority, status
+                FROM tasks
+                WHERE project_id = %s
+                ORDER BY priority ASC
+            """, (project_id,))
+            tasks = cursor.fetchall()
+        
+        return jsonify({"tasks": tasks, "count": len(tasks)})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@main.route("/admin/email/test-smtp", methods=["POST"])
+def test_smtp_connection():
+    """Test SMTP connection"""
+    try:
+        from app.email_sender import get_email_sender
+        sender = get_email_sender()
+        success, message = sender.test_connection()
+        
+        if success:
+            return jsonify({"success": True, "message": message})
+        else:
+            return jsonify({"error": message}), 400
     except Exception as e:
         return jsonify({"error": str(e)}), 500
