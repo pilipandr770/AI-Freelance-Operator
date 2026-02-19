@@ -111,7 +111,13 @@ Return JSON:
 
         except Exception as e:
             self.log_action(project_id, "ESTIMATION_FAILED", error_message=str(e), success=False)
-            return None
+            # Fallback: use default estimation so pipeline doesn't get stuck
+            default_hours = 20.0
+            default_price = default_hours * self._get_hourly_rate()
+            self.update_project_fields(project_id, estimated_hours=default_hours, quoted_price=default_price)
+            self.log_state_transition(project_id, 'CLASSIFIED', 'ESTIMATION_READY',
+                                      f'Estimation failed — defaults: {default_hours}h, ${default_price}')
+            return "ESTIMATION_READY"
 
     def _get_hourly_rate(self):
         """Get hourly rate from system settings"""

@@ -107,7 +107,16 @@ Return JSON:
 
         except Exception as e:
             self.log_action(project_id, "OFFER_GENERATION_FAILED", error_message=str(e), success=False)
-            return None
+            # Fallback: generate a simple offer so pipeline doesn't get stuck
+            fallback_text = (
+                f"Hello,\n\nThank you for your project \"{title}\".\n"
+                f"I can complete this for ${quoted_price:.0f} in approximately {estimated_hours:.0f} hours.\n"
+                f"Please let me know if you'd like to proceed.\n\nBest regards"
+            )
+            self._store_offer_message(project_id, client_email, f'Proposal: {title}', fallback_text)
+            self.log_state_transition(project_id, 'ESTIMATION_READY', 'OFFER_SENT',
+                                      'Offer gen failed — using fallback proposal')
+            return "OFFER_SENT"
 
     def _get_prepayment_percentage(self):
         try:

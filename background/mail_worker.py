@@ -156,6 +156,12 @@ class MailWorker:
         email_match = re.search(r'<([^>]+)>', sender)
         client_email = email_match.group(1) if email_match else sender.strip()
 
+        # ── WHITELIST: only process emails from allowed domains ──
+        if ALLOWED_SENDER_DOMAINS:
+            sender_domain = client_email.split('@')[-1].lower() if '@' in client_email else ''
+            if not any(sender_domain.endswith(d) for d in ALLOWED_SENDER_DOMAINS):
+                return False  # silently skip non-whitelisted sender
+
         # Skip automated/bulk mail (newsletters, marketing, bounces)
         if self._is_bulk_email(email_message):
             return False

@@ -89,4 +89,8 @@ Return JSON:
 
         except Exception as e:
             self.log_action(project_id, "CLASSIFICATION_FAILED", error_message=str(e), success=False)
-            return None
+            # Fallback: set defaults so pipeline doesn't get stuck
+            self.update_project_fields(project_id, complexity='MEDIUM', category='general')
+            self.log_state_transition(project_id, 'ANALYZED', 'CLASSIFIED',
+                                      'Classification failed — using defaults')
+            return "CLASSIFIED"
