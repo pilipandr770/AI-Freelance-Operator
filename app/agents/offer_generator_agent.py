@@ -76,6 +76,7 @@ class OfferGeneratorAgent(BaseAgent):
                 self._submit_or_notify_bid(
                     project_id, title, quoted_price, freelancer_url, proposal_text
                 )
+                subject = f'Bid: {title}'
             else:
                 # Store as outbound email for sending
                 subject = result.get('subject', f'Proposal: {title}')
