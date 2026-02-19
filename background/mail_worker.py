@@ -17,10 +17,18 @@ from app.parsers.freelancer_parser import is_freelancer_digest, parse_digest
 from config import Config
 
 
-# ── WHITELIST: Only emails from these domains will be processed ──
-# Everything else is silently ignored.
-ALLOWED_SENDER_DOMAINS = [
-    'freelancer.com',
+# ── DOMAIN FILTERING ──
+# ALLOWED_SENDER_DOMAINS from .env (comma-separated).  Use "*" to accept all.
+# BLOCKED_SENDER_DOMAINS — always rejected even when allowed = "*".
+_raw_allowed = getattr(Config, 'ALLOWED_SENDER_DOMAINS', '*')
+ALLOWED_SENDER_DOMAINS = (
+    [d.strip().lower() for d in _raw_allowed.split(',') if d.strip()]
+    if _raw_allowed and _raw_allowed.strip() != '*' else []
+)   # empty list = accept all
+
+BLOCKED_SENDER_DOMAINS = [
+    'noreply', 'no-reply', 'mailer-daemon',
+    'postmaster', 'bounce', 'donotreply',
 ]
 
 
@@ -158,13 +166,20 @@ class MailWorker:
         email_match = re.search(r'<([^>]+)>', sender)
         client_email = email_match.group(1) if email_match else sender.strip()
 
-        # ── WHITELIST: only process emails from allowed domains ──
-        is_whitelisted = False
+        # ── DOMAIN FILTERING ──
+        sender_local = client_email.split('@')[0].lower() if '@' in client_email else ''
+        sender_domain = client_email.split('@')[-1].lower() if '@' in client_email else ''
+
+        # Always block known automated / noreply addresses
+        if any(b in sender_local for b in BLOCKED_SENDER_DOMAINS):
+            return False
+
+        # Whitelist check (empty list = accept all)
+        is_whitelisted = True
         if ALLOWED_SENDER_DOMAINS:
-            sender_domain = client_email.split('@')[-1].lower() if '@' in client_email else ''
             if not any(sender_domain.endswith(d) for d in ALLOWED_SENDER_DOMAINS):
-                return False  # silently skip non-whitelisted sender
-            is_whitelisted = True
+                return False  # domain not in whitelist
+        # If we reached here, the sender is allowed
 
         # ── Freelancer.com digest: one email → multiple projects ──
         if is_freelancer_digest(subject, body):

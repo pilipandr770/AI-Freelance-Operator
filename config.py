@@ -57,6 +57,9 @@ class Config:
     FREELANCER_PASSWORD = os.getenv('FREELANCER_PASSWORD', '')
     FREELANCER_HEADLESS = os.getenv('FREELANCER_HEADLESS', 'true')   # 'false' to see browser
     FREELANCER_DEFAULT_DAYS = int(os.getenv('FREELANCER_DEFAULT_DAYS', '7'))
+
+    # Email intake filtering: comma-separated domains, or "*" to accept all
+    ALLOWED_SENDER_DOMAINS = os.getenv('ALLOWED_SENDER_DOMAINS', '*')
     
     # System Settings (defaults, can be overridden in DB)
     HOURLY_RATE = float(os.getenv('HOURLY_RATE', '50.0'))
