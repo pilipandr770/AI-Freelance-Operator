@@ -5,6 +5,7 @@ Used by the engine and also available for manual triggering from admin panel.
 from app.agents.email_parser_agent import EmailParserAgent
 from app.agents.scam_filter_agent import ScamFilterAgent
 from app.agents.classification_agent import ClassificationAgent
+from app.agents.requirements_agent import RequirementsAnalysisAgent
 from app.agents.estimation_agent import EstimationAgent
 from app.agents.offer_generator_agent import OfferGeneratorAgent
 from app.agents.dialogue_orchestrator_agent import DialogueOrchestratorAgent
@@ -15,7 +16,8 @@ STATE_MACHINE = {
     'NEW':              {'agent': EmailParserAgent,           'next': 'PARSED'},
     'PARSED':           {'agent': ScamFilterAgent,            'next': 'ANALYZED'},
     'ANALYZED':         {'agent': ClassificationAgent,        'next': 'CLASSIFIED'},
-    'CLASSIFIED':       {'agent': EstimationAgent,            'next': 'ESTIMATION_READY'},
+    'CLASSIFIED':       {'agent': RequirementsAnalysisAgent,  'next': 'REQUIREMENTS_ANALYZED'},
+    'REQUIREMENTS_ANALYZED': {'agent': EstimationAgent,       'next': 'ESTIMATION_READY'},
     'ESTIMATION_READY': {'agent': OfferGeneratorAgent,        'next': 'OFFER_SENT'},
     'OFFER_SENT':       {'agent': None,                       'next': 'NEGOTIATION'},  # waits for client
     'NEGOTIATION':      {'agent': DialogueOrchestratorAgent,  'next': 'AGREED'},

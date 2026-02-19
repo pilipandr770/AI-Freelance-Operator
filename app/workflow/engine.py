@@ -2,7 +2,7 @@
 Workflow Engine — the core of the AI Freelance Operator.
 
 Orchestrates the project lifecycle through state transitions:
-  NEW → PARSED → ANALYZED → CLASSIFIED → ESTIMATION_READY → OFFER_SENT → NEGOTIATION → AGREED → CLOSED
+  NEW → PARSED → ANALYZED → CLASSIFIED → REQUIREMENTS_ANALYZED → ESTIMATION_READY → OFFER_SENT → NEGOTIATION → AGREED → CLOSED
                       ↘ REJECTED (at any scam/illegal check)
 
 Each state has an assigned agent that processes projects in that state
@@ -15,6 +15,7 @@ from app.database import Database
 from app.agents.email_parser_agent import EmailParserAgent
 from app.agents.scam_filter_agent import ScamFilterAgent
 from app.agents.classification_agent import ClassificationAgent
+from app.agents.requirements_agent import RequirementsAnalysisAgent
 from app.agents.estimation_agent import EstimationAgent
 from app.agents.offer_generator_agent import OfferGeneratorAgent
 from app.agents.dialogue_orchestrator_agent import DialogueOrchestratorAgent
@@ -41,7 +42,8 @@ class WorkflowEngine:
             'NEW':              EmailParserAgent(),
             'PARSED':           ScamFilterAgent(),
             'ANALYZED':         ClassificationAgent(),
-            'CLASSIFIED':       EstimationAgent(),
+            'CLASSIFIED':       RequirementsAnalysisAgent(),
+            'REQUIREMENTS_ANALYZED': EstimationAgent(),
             'ESTIMATION_READY': OfferGeneratorAgent(),
             'NEGOTIATION':      DialogueOrchestratorAgent(),
         }
@@ -227,6 +229,10 @@ class WorkflowEngine:
                 except Exception:
                     pass
 
+            elif to_state == 'REQUIREMENTS_ANALYZED':
+                # RequirementsAnalysisAgent sends its own detailed Telegram analysis
+                pass
+
             elif to_state == 'ESTIMATION_READY':
                 try:
                     with Database.get_cursor() as cursor:
@@ -268,7 +274,8 @@ class WorkflowEngine:
                 {'state': 'NEW', 'agent': 'email_parser_agent', 'description': 'Parse email, extract project details'},
                 {'state': 'PARSED', 'agent': 'scam_filter_agent', 'description': 'Check for scam/fraud/illegal'},
                 {'state': 'ANALYZED', 'agent': 'classification_agent', 'description': 'Classify complexity, tech stack'},
-                {'state': 'CLASSIFIED', 'agent': 'estimation_agent', 'description': 'Estimate hours and cost'},
+                {'state': 'CLASSIFIED', 'agent': 'requirements_analysis_agent', 'description': 'Analyse requirements clarity, generate questions'},
+                {'state': 'REQUIREMENTS_ANALYZED', 'agent': 'estimation_agent', 'description': 'Estimate hours and cost'},
                 {'state': 'ESTIMATION_READY', 'agent': 'offer_generator_agent', 'description': 'Generate commercial proposal'},
                 {'state': 'OFFER_SENT', 'agent': None, 'description': 'Waiting for client response'},
                 {'state': 'NEGOTIATION', 'agent': 'dialogue_orchestrator_agent', 'description': 'Handle client negotiation'},

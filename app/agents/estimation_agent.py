@@ -1,6 +1,6 @@
 """
 Estimation Agent — estimates hours, cost, and creates task breakdown.
-Stage: CLASSIFIED → ESTIMATION_READY
+Stage: REQUIREMENTS_ANALYZED → ESTIMATION_READY
 """
 import json
 from app.agents.base import BaseAgent
@@ -29,11 +29,32 @@ class EstimationAgent(BaseAgent):
         complexity = project.get('complexity', 'MEDIUM')
         tech_stack = project.get('tech_stack', [])
         is_familiar = project.get('is_familiar_stack', True)
+        technical_spec = project.get('technical_spec', '') or ''
+
+        # Parse requirements analysis if available
+        req_analysis = ''
+        if technical_spec:
+            try:
+                spec = json.loads(technical_spec)
+                parts = []
+                if spec.get('scope_summary'):
+                    parts.append(f"Scope: {spec['scope_summary']}")
+                if spec.get('assumptions'):
+                    parts.append(f"Assumptions: {', '.join(spec['assumptions'][:5])}")
+                if spec.get('risks'):
+                    parts.append(f"Risks: {', '.join(spec['risks'][:5])}")
+                if spec.get('clarity_score'):
+                    parts.append(f"Requirements clarity: {spec['clarity_score']}/10")
+                req_analysis = '\n'.join(parts)
+            except (json.JSONDecodeError, TypeError):
+                req_analysis = technical_spec[:500]
 
         # Get hourly rate from settings
         hourly_rate = self._get_hourly_rate()
 
         self.log_action(project_id, "ESTIMATION_STARTED")
+
+        req_section = f"\nRequirements Analysis:\n{req_analysis}\n" if req_analysis else ''
 
         prompt = f"""
 You are estimating a freelance software project.
@@ -44,8 +65,9 @@ Complexity: {complexity}
 Tech Stack: {tech_stack}
 Is Familiar Stack: {is_familiar}
 Hourly Rate: ${hourly_rate}/hour
-
+{req_section}
 Create a detailed estimation with task breakdown.
+Take into account the requirements analysis above (especially risks and assumptions).
 
 Return JSON:
 {{
@@ -104,7 +126,7 @@ Return JSON:
             )
 
             self.log_state_transition(
-                project_id, 'CLASSIFIED', 'ESTIMATION_READY',
+                project_id, 'REQUIREMENTS_ANALYZED', 'ESTIMATION_READY',
                 f"Estimated {total_hours}h, ${quoted_price}"
             )
             return "ESTIMATION_READY"
@@ -115,7 +137,7 @@ Return JSON:
             default_hours = 20.0
             default_price = default_hours * self._get_hourly_rate()
             self.update_project_fields(project_id, estimated_hours=default_hours, quoted_price=default_price)
-            self.log_state_transition(project_id, 'CLASSIFIED', 'ESTIMATION_READY',
+            self.log_state_transition(project_id, 'REQUIREMENTS_ANALYZED', 'ESTIMATION_READY',
                                       f'Estimation failed — defaults: {default_hours}h, ${default_price}')
             return "ESTIMATION_READY"
 

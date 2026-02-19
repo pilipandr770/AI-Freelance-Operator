@@ -5,9 +5,91 @@ Parses the "latest projects matching your skills" digest emails
 into individual project records with structured fields.
 
 Deterministic (regex-based) — no AI tokens needed.
+Strips boilerplate (greeting header, social media links, footer)
+so downstream AI agents only see clean project data.
 """
 import re
 from typing import List, Dict
+
+
+# ── Boilerplate patterns to strip ──
+_HEADER_PATTERNS = [
+    re.compile(r'^.*?Hi\s+\w+.*?\n', re.IGNORECASE),
+    re.compile(r'Here are the latest.*?\n', re.IGNORECASE),
+    re.compile(r'We found.*?matching your skills.*?\n', re.IGNORECASE),
+]
+
+_FOOTER_MARKERS = [
+    'View more jobs',
+    'Regards,',
+    'The Freelancer Team',
+    'Freelancer.com',
+    'Download Freelancer',
+    'Get it on Google Play',
+    'Download on the App Store',
+    'Privacy Policy',
+    'Terms and Conditions',
+    'Unsubscribe',
+    '\u00a9 20',   # © 20xx
+    'Copyright 20',
+    'facebook.com',
+    'twitter.com',
+    'x.com/freelancer',
+    'instagram.com',
+    'youtube.com',
+    'linkedin.com',
+    'tiktok.com',
+]
+
+_SOCIAL_LINK_RE = re.compile(
+    r'https?://(?:www\.)?(?:facebook|twitter|instagram|youtube|linkedin|tiktok|x)\.com/[^\s]*',
+    re.IGNORECASE,
+)
+
+_BOILERPLATE_LINE_RE = re.compile(
+    r'(?:privacy\s*policy|terms\s*(?:and|&)\s*conditions|unsubscribe|'
+    r'download\s*(?:the\s*)?app|get\s*it\s*on|app\s*store|google\s*play|'
+    r'all\s*rights\s*reserved|you\s*are\s*receiving\s*this)',
+    re.IGNORECASE,
+)
+
+
+def strip_boilerplate(text: str) -> str:
+    """
+    Strip freelancer.com email boilerplate — social links, greeting,
+    footer, app download links, copyright.
+    Returns clean text suitable for AI models.
+    """
+    if not text:
+        return ''
+
+    # Remove social-media URLs
+    text = _SOCIAL_LINK_RE.sub('', text)
+
+    # Remove lines matching boilerplate patterns
+    lines = text.split('\n')
+    clean_lines = []
+    footer_hit = False
+    for line in lines:
+        stripped = line.strip()
+        # Once we hit a footer marker, drop the rest
+        if not footer_hit:
+            for marker in _FOOTER_MARKERS:
+                if marker.lower() in stripped.lower():
+                    footer_hit = True
+                    break
+        if footer_hit:
+            continue
+        # Skip individual boilerplate lines
+        if _BOILERPLATE_LINE_RE.search(stripped):
+            continue
+        clean_lines.append(line)
+
+    text = '\n'.join(clean_lines)
+
+    # Collapse multiple blank lines
+    text = re.sub(r'\n{3,}', '\n\n', text)
+    return text.strip()
 
 
 def is_freelancer_digest(subject: str, body: str) -> bool:
@@ -37,9 +119,9 @@ def parse_digest(body: str) -> List[Dict]:
 
     content = body[match.end():]
 
-    # Cut off footer
-    for marker in ['View more jobs', 'Regards,', 'The Freelancer Team', '\u00a9 20']:
-        idx = content.find(marker)
+    # Cut off footer (use expanded list)
+    for marker in _FOOTER_MARKERS:
+        idx = content.lower().find(marker.lower())
         if idx > 0:
             content = content[:idx]
             break
@@ -70,7 +152,7 @@ def parse_digest(body: str) -> List[Dict]:
         title = m.group(1).strip()
         budget_str = m.group(2).strip()
         skills_str = m.group(3).strip()
-        description = m.group(4).strip()
+        description = strip_boilerplate(m.group(4).strip())
         url_path = m.group(5).strip()
 
         # Skip if title looks like garbage
