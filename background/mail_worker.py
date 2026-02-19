@@ -13,6 +13,7 @@ import re
 from email.header import decode_header
 from app.database import Database, QueryHelper
 from app.telegram_notifier import get_notifier
+from app.parsers.freelancer_parser import is_freelancer_digest, parse_digest
 from config import Config
 
 
@@ -158,13 +159,19 @@ class MailWorker:
         client_email = email_match.group(1) if email_match else sender.strip()
 
         # ── WHITELIST: only process emails from allowed domains ──
+        is_whitelisted = False
         if ALLOWED_SENDER_DOMAINS:
             sender_domain = client_email.split('@')[-1].lower() if '@' in client_email else ''
             if not any(sender_domain.endswith(d) for d in ALLOWED_SENDER_DOMAINS):
                 return False  # silently skip non-whitelisted sender
+            is_whitelisted = True
 
-        # Skip automated/bulk mail (newsletters, marketing, bounces)
-        if self._is_bulk_email(email_message):
+        # ── Freelancer.com digest: one email → multiple projects ──
+        if is_freelancer_digest(subject, body):
+            return self._handle_freelancer_digest(body, message_id)
+
+        # Skip automated/bulk mail (only for non-whitelisted senders)
+        if not is_whitelisted and self._is_bulk_email(email_message):
             return False
 
         # Check if this is a reply to an existing project
@@ -259,6 +266,91 @@ class MailWorker:
                         pass
         except Exception as e:
             print(f"[MailWorker] Error updating project state: {e}")
+
+    def _handle_freelancer_digest(self, body, message_id):
+        """Parse a freelancer.com digest email and create multiple projects."""
+        projects = parse_digest(body)
+        if not projects:
+            return False
+
+        created = 0
+        for proj in projects:
+            try:
+                with Database.get_cursor() as cursor:
+                    # Duplicate check: same title from freelancer.com in last 48h
+                    cursor.execute("""
+                        SELECT id FROM projects
+                        WHERE title = %s AND source = 'freelancer.com'
+                          AND created_at > NOW() - INTERVAL '48 hours'
+                    """, (proj['title'],))
+                    if cursor.fetchone():
+                        continue  # skip duplicate
+
+                    # Create project directly in PARSED state (data already structured)
+                    budget_note = f"Budget: {proj['budget_raw']}"
+                    if proj['is_hourly']:
+                        budget_note += ' (hourly rate)'
+
+                    full_desc = (
+                        f"{proj['description']}\n\n"
+                        f"Skills: {', '.join(proj['tech_stack'])}\n"
+                        f"{budget_note}\n"
+                        f"URL: {proj['freelancer_url']}"
+                    )
+
+                    cursor.execute("""
+                        INSERT INTO projects (
+                            title, description, budget_min, budget_max,
+                            tech_stack, category, current_state, source,
+                            requirements_doc, created_at, updated_at
+                        ) VALUES (%s, %s, %s, %s, %s, %s, 'PARSED', 'freelancer.com',
+                                  %s, NOW(), NOW())
+                        RETURNING id
+                    """, (
+                        proj['title'],
+                        full_desc,
+                        proj['budget_min'],
+                        proj['budget_max'],
+                        proj['tech_stack'],
+                        proj['category'],
+                        proj['freelancer_url']
+                    ))
+                    project_id = cursor.fetchone()['id']
+
+                    # Store listing as inbound message (already processed — no AI parse needed)
+                    cursor.execute("""
+                        INSERT INTO project_messages
+                        (project_id, direction, sender_email, subject, body, message_id, is_processed)
+                        VALUES (%s, 'inbound', 'noreply@notifications.freelancer.com', %s, %s, %s, TRUE)
+                    """, (project_id, proj['title'], full_desc, message_id))
+
+                    # Log state transition
+                    cursor.execute("""
+                        INSERT INTO project_states (project_id, from_state, to_state, changed_by, reason)
+                        VALUES (%s, 'NEW', 'PARSED', 'freelancer_parser', %s)
+                    """, (project_id, budget_note))
+
+                print(f"[MailWorker] Freelancer #{project_id}: {proj['title'][:60]}")
+
+                # Telegram notification
+                desc_with_budget = (
+                    f"💵 {proj['budget_raw']}\n"
+                    f"🛠 {', '.join(proj['tech_stack'][:5])}\n\n"
+                    f"{proj['description'][:250]}"
+                )
+                get_notifier().notify_new_project(
+                    project_id, proj['title'],
+                    proj['freelancer_url'], desc_with_budget
+                )
+
+                created += 1
+            except Exception as e:
+                print(f"[MailWorker] Error creating freelancer project: {e}")
+
+        if created > 0:
+            print(f"[MailWorker] Created {created} freelancer project(s) from digest")
+
+        return created > 0
 
     def _create_project_from_email(self, client_email, subject, body, message_id):
         """Create a new project record from email data"""

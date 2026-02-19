@@ -5,6 +5,7 @@ Stage: ESTIMATION_READY → OFFER_SENT
 import json
 from app.agents.base import BaseAgent
 from app.database import Database, QueryHelper
+from app.telegram_notifier import get_notifier
 
 
 class OfferGeneratorAgent(BaseAgent):
@@ -33,6 +34,9 @@ class OfferGeneratorAgent(BaseAgent):
         estimated_hours = project.get('estimated_hours', 0)
         quoted_price = project.get('quoted_price', 0)
         client_email = project.get('client_email', '')
+        source = project.get('source', '')
+        is_freelancer = (source == 'freelancer.com')
+        freelancer_url = project.get('requirements_doc', '') if is_freelancer else ''
 
         # Get settings
         prepayment = self._get_prepayment_percentage()
@@ -43,37 +47,16 @@ class OfferGeneratorAgent(BaseAgent):
 
         self.log_action(project_id, "OFFER_GENERATION_STARTED")
 
-        prompt = f"""
-Generate a professional commercial proposal for a freelance project.
-
-Project Title: {title}
-Description: {description}
-Complexity: {complexity}
-Tech Stack: {', '.join(tech_stack) if tech_stack else 'To be determined'}
-Estimated Hours: {estimated_hours}
-Quoted Price: ${quoted_price}
-Hourly Rate: ${hourly_rate}
-Prepayment Required: {prepayment}%
-Client Email: {client_email}
-
-Task Breakdown:
-{json.dumps(tasks, indent=2, default=str) if tasks else 'No detailed breakdown available'}
-
-Generate a complete commercial proposal in plain text (not markdown). The proposal should be professional,
-clear, and ready to send to the client via email.
-
-Return JSON:
-{{
-    "subject": "email subject line for the proposal",
-    "proposal_text": "full text of the proposal email",
-    "summary": {{
-        "total_price": {quoted_price},
-        "prepayment_amount": {quoted_price * prepayment / 100},
-        "estimated_delivery_days": 14,
-        "payment_terms": "50% upfront, 50% on delivery"
-    }}
-}}
-"""
+        if is_freelancer:
+            prompt = self._freelancer_bid_prompt(
+                title, description, tech_stack, estimated_hours,
+                quoted_price, hourly_rate, complexity
+            )
+        else:
+            prompt = self._email_proposal_prompt(
+                title, description, tech_stack, estimated_hours,
+                quoted_price, hourly_rate, prepayment, client_email, complexity, tasks
+            )
 
         try:
             result = self.ai_json(prompt)
@@ -82,14 +65,20 @@ Return JSON:
             cost = result.pop('_cost', 0)
             exec_time = result.pop('_execution_time_ms', 0)
 
-            # Store the proposal as technical_spec (repurposing field for now)
-            proposal_text = result.get('proposal_text', '')
+            # Get proposal / bid text
+            proposal_text = result.get('bid_text', '') or result.get('proposal_text', '')
             if proposal_text:
                 self.update_project_field(project_id, 'technical_spec', proposal_text)
 
-            # Store the offer as a project message (outbound, ready to send)
-            subject = result.get('subject', f'Proposal: {title}')
-            self._store_offer_message(project_id, client_email, subject, proposal_text)
+            if is_freelancer:
+                # Send bid via Telegram (can't email noreply@freelancer.com)
+                self._send_freelancer_bid(
+                    project_id, title, quoted_price, freelancer_url, proposal_text
+                )
+            else:
+                # Store as outbound email for sending
+                subject = result.get('subject', f'Proposal: {title}')
+                self._store_offer_message(project_id, client_email, subject, proposal_text)
 
             self.log_action(
                 project_id, "OFFER_GENERATION_COMPLETED",
@@ -108,12 +97,20 @@ Return JSON:
         except Exception as e:
             self.log_action(project_id, "OFFER_GENERATION_FAILED", error_message=str(e), success=False)
             # Fallback: generate a simple offer so pipeline doesn't get stuck
+            stack_str = ', '.join(tech_stack[:3]) if tech_stack else 'relevant technologies'
             fallback_text = (
-                f"Hello,\n\nThank you for your project \"{title}\".\n"
-                f"I can complete this for ${quoted_price:.0f} in approximately {estimated_hours:.0f} hours.\n"
-                f"Please let me know if you'd like to proceed.\n\nBest regards"
+                f"Hello,\n\nI'm interested in your project \"{title}\".\n"
+                f"I have experience with {stack_str} and can complete this "
+                f"in approximately {estimated_hours:.0f} hours for ${quoted_price:.0f}.\n"
+                f"I'd love to discuss the details.\n\nBest regards"
             )
-            self._store_offer_message(project_id, client_email, f'Proposal: {title}', fallback_text)
+            self.update_project_field(project_id, 'technical_spec', fallback_text)
+            if is_freelancer:
+                self._send_freelancer_bid(
+                    project_id, title, quoted_price, freelancer_url, fallback_text
+                )
+            else:
+                self._store_offer_message(project_id, client_email, f'Proposal: {title}', fallback_text)
             self.log_state_transition(project_id, 'ESTIMATION_READY', 'OFFER_SENT',
                                       'Offer gen failed — using fallback proposal')
             return "OFFER_SENT"
@@ -154,3 +151,85 @@ Return JSON:
                 """, (project_id, mail_username, client_email, subject, body))
         except Exception as e:
             print(f"Error storing offer message: {e}")
+
+    def _send_freelancer_bid(self, project_id, title, price, url, bid_text):
+        """Send completed bid to owner via Telegram (freelancer.com projects can't be emailed)."""
+        try:
+            tg = get_notifier()
+            # Escape HTML for Telegram
+            from app.telegram_notifier import _esc
+            msg = (
+                f"📋 <b>Бид готов — проект #{project_id}</b>\n\n"
+                f"<b>{_esc(title)}</b>\n"
+                f"💰 <b>Цена:</b> ${price:.0f}\n"
+                f"🔗 <a href=\"{url}\">Открыть на freelancer.com</a>\n\n"
+                f"<b>Текст для копирования:</b>\n"
+                f"<code>{_esc(bid_text[:3000])}</code>"
+            )
+            tg.send(msg)
+        except Exception as e:
+            print(f"[OfferGenerator] Telegram bid notify error: {e}")
+
+    def _freelancer_bid_prompt(self, title, description, tech_stack, hours, price, hourly_rate, complexity):
+        """Generate prompt for freelancer.com bid message."""
+        return f"""
+Generate a concise and compelling bid message for a freelancer.com project.
+
+Project Title: {title}
+Description: {description}
+Required Skills: {', '.join(tech_stack) if tech_stack else 'Various'}
+Complexity: {complexity or 'MEDIUM'}
+My Estimation: {hours} hours, ${price}
+My Hourly Rate: ${hourly_rate}/hour
+
+Rules:
+- 150-300 words, professional but friendly
+- Show understanding of the project requirements
+- Highlight relevant experience with the required tech stack
+- Mention proposed timeline
+- DO NOT include formal proposal headers or legal terms
+- End with invitation to discuss
+
+Return JSON:
+{{
+    "bid_text": "the complete bid message ready to post on freelancer.com",
+    "key_selling_points": ["point1", "point2"],
+    "confidence": "HIGH or MEDIUM or LOW"
+}}
+"""
+
+    def _email_proposal_prompt(self, title, description, tech_stack, hours,
+                                 price, hourly_rate, prepayment, client_email,
+                                 complexity, tasks):
+        """Generate prompt for email commercial proposal."""
+        return f"""
+Generate a professional commercial proposal for a freelance project.
+
+Project Title: {title}
+Description: {description}
+Complexity: {complexity}
+Tech Stack: {', '.join(tech_stack) if tech_stack else 'To be determined'}
+Estimated Hours: {hours}
+Quoted Price: ${price}
+Hourly Rate: ${hourly_rate}
+Prepayment Required: {prepayment}%
+Client Email: {client_email}
+
+Task Breakdown:
+{json.dumps(tasks, indent=2, default=str) if tasks else 'No detailed breakdown available'}
+
+Generate a complete commercial proposal in plain text (not markdown). The proposal should be professional,
+clear, and ready to send to the client via email.
+
+Return JSON:
+{{
+    "subject": "email subject line for the proposal",
+    "proposal_text": "full text of the proposal email",
+    "summary": {{
+        "total_price": {price},
+        "prepayment_amount": {price * prepayment / 100},
+        "estimated_delivery_days": 14,
+        "payment_terms": "50% upfront, 50% on delivery"
+    }}
+}}
+"""

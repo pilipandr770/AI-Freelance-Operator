@@ -91,7 +91,7 @@ class WorkflowEngine:
                     cursor.execute(f"""
                         SELECT id, current_state, client_email, title, description, 
                                tech_stack, budget_min, budget_max, complexity,
-                               estimated_hours, quoted_price
+                               estimated_hours, quoted_price, source
                         FROM projects
                         WHERE current_state IN ({placeholders})
                         ORDER BY created_at ASC
@@ -105,7 +105,7 @@ class WorkflowEngine:
                         SELECT p.id, p.current_state, p.client_email, p.title, 
                                p.description, p.tech_stack, p.budget_min, p.budget_max, 
                                p.complexity, p.estimated_hours, p.quoted_price,
-                               p.created_at
+                               p.source, p.created_at
                         FROM projects p
                         WHERE p.current_state = 'NEGOTIATION'
                           AND EXISTS (
@@ -244,7 +244,11 @@ class WorkflowEngine:
 
             elif to_state == 'OFFER_SENT':
                 price = float(project_data.get('quoted_price') or 0)
-                tg.notify_offer_sent(project_id, title, price, client_email)
+                source = project_data.get('source', '')
+                if source == 'freelancer.com':
+                    pass  # OfferGeneratorAgent sends detailed Telegram bid instead
+                else:
+                    tg.notify_offer_sent(project_id, title, price, client_email)
 
             elif to_state == 'AGREED':
                 price = float(project_data.get('quoted_price') or 0)
