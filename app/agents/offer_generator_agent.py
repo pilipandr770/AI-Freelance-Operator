@@ -238,7 +238,7 @@ Rules:
 - Show understanding of the project requirements
 - Highlight relevant experience with the required tech stack
 - Mention proposed timeline
-- DO NOT include formal proposal headers or legal terms
+- Include payment terms: {self._get_prepayment_percentage()}% upfront before work begins
 - End with invitation to discuss
 - Sign off with: {me['name']}, {me['company']} | {me['website']}
 

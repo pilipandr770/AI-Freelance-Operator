@@ -139,11 +139,17 @@ class RequirementsAnalysisAgent(BaseAgent):
                 return "CLARIFICATION_NEEDED"
 
             else:
-                # Clear enough (or max rounds reached) вЂ” proceed to estimation
+                # Clear enough (or max rounds reached) — proceed to estimation
                 if clarity_score < self.CLARITY_THRESHOLD:
-                    note = f"Clarity {clarity_score}/10 still low after {clarification_round + 1} rounds вЂ” proceeding with assumptions"
+                    note = f"Clarity {clarity_score}/10 still low after {clarification_round + 1} rounds — proceeding with assumptions"
                 else:
-                    note = f"Clarity {clarity_score}/10 вЂ” requirements sufficient"
+                    note = f"Clarity {clarity_score}/10 — requirements sufficient"
+
+                # Send initial acknowledgment with payment terms (first round only)
+                if clarification_round == 0:
+                    self._send_initial_terms(
+                        project_id, title, source, client_email, requirements_doc
+                    )
 
                 self._send_telegram_analysis(
                     project_id, title, clarity_score,
@@ -200,6 +206,68 @@ class RequirementsAnalysisAgent(BaseAgent):
 
     # в”Ђв”Ђв”Ђ Send clarification questions в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
 
+    # ─── Send initial terms (for clear specs, no questions needed) ────
+
+    def _send_initial_terms(self, project_id, title, source, client_email, freelancer_url):
+        """Send a brief acknowledgment with payment terms before estimation begins."""
+        from config import Config
+
+        hourly_rate = Config.HOURLY_RATE
+        prepayment = Config.PREPAYMENT_PERCENTAGE
+
+        message_body = (
+            f"Hello,\n\n"
+            f"Thank you for your project \"{title}\". "
+            f"I have reviewed the requirements and they are clear enough to proceed.\n\n"
+            f"Before I prepare a detailed estimate, I would like to confirm our standard terms:\n\n"
+            f"- Hourly rate: ${hourly_rate}/hour\n"
+            f"- Payment: {prepayment}% upfront before work begins, "
+            f"{100 - prepayment}% upon delivery\n"
+            f"- I will send you a detailed proposal with exact pricing and timeline shortly\n\n"
+            f"If these terms work for you, no action is needed — "
+            f"I will follow up with the full proposal.\n"
+            f"If you have any questions about the terms, feel free to reply.\n\n"
+            f"{Config.get_signature()}"
+        )
+
+        if source == 'freelancer.com':
+            tg = get_notifier()
+            copy_text = (
+                f"Hi! Thank you for posting \"{title}\". I have reviewed the requirements "
+                f"and I am ready to submit a detailed proposal.\n\n"
+                f"Our terms: ${hourly_rate}/hour, {prepayment}% upfront before work "
+                f"begins. I will send the full estimate shortly.\n\n"
+                f"Looking forward to working with you!"
+            )
+            msg = (
+                f"\U0001f4b0 <b>Условия отправлены — проект #{project_id}</b>\n"
+                f"<b>{_esc(title)}</b>\n\n"
+                f"<b>Текст для копирования заказчику:</b>\n"
+                f"<code>{_esc(copy_text)}</code>"
+            )
+            if freelancer_url:
+                msg += f"\n\n\U0001f517 <a href=\"{freelancer_url}\">Открыть на Freelancer</a>"
+            tg.send(msg[:4096])
+
+        elif client_email:
+            try:
+                from app.database import QueryHelper
+                mail_username = QueryHelper.get_system_setting('mail_username', Config.BUSINESS_EMAIL)
+                with Database.get_cursor() as cursor:
+                    cursor.execute("""
+                        INSERT INTO project_messages
+                        (project_id, direction, sender_email, recipient_email, subject, body, is_processed)
+                        VALUES (%s, 'outbound', %s, %s, %s, %s, FALSE)
+                    """, (
+                        project_id, mail_username, client_email,
+                        f"Re: {title} — Terms and Next Steps",
+                        message_body
+                    ))
+                print(f"[RequirementsAgent] Initial terms email queued for project #{project_id}")
+            except Exception as e:
+                print(f"[RequirementsAgent] Error queuing terms email: {e}")
+
+
     def _send_clarification_questions(self, project_id, title, questions,
                                        source, client_email, freelancer_url,
                                        round_num):
@@ -207,12 +275,25 @@ class RequirementsAnalysisAgent(BaseAgent):
         from config import Config
 
         q_text = '\n'.join(f"{i+1}. {q}" for i, q in enumerate(questions[:8]))
+        hourly_rate = Config.HOURLY_RATE
+        prepayment = Config.PREPAYMENT_PERCENTAGE
+
+        terms_block = (
+            f"Our standard terms:\n"
+            f"- Hourly rate: ${hourly_rate}/hour\n"
+            f"- Payment: {prepayment}% upfront before work begins, "
+            f"{100 - prepayment}% upon delivery\n"
+            f"- A detailed estimate with timeline will follow after we clarify the scope\n"
+        )
+
         message_body = (
             f"Hello,\n\n"
-            f"Thank you for your project \"{title}\". Before I can provide an accurate "
-            f"estimate, I have a few clarifying questions:\n\n"
+            f"Thank you for your project \"{title}\". I'm very interested and would like "
+            f"to provide you with an accurate estimate.\n\n"
+            f"{terms_block}\n"
+            f"Before I proceed, I have a few questions to clarify the scope:\n\n"
             f"{q_text}\n\n"
-            f"Your answers will help me give you a precise timeline and cost estimate.\n\n"
+            f"Looking forward to your response.\n\n"
             f"{Config.get_signature()}"
         )
 
@@ -261,9 +342,12 @@ class RequirementsAnalysisAgent(BaseAgent):
 
     def _questions_copy_text(self, title, questions):
         """Plain text version of questions for copy-pasting to freelancer chat."""
+        from config import Config
         q_text = '\n'.join(f"{i+1}. {q}" for i, q in enumerate(questions[:8]))
         return (
-            f"Hi! Thank you for posting \"{title}\". I'm very interested in this project. "
+            f"Hi! Thank you for posting \"{title}\". I'm very interested in this project.\n\n"
+            f"Our terms: ${Config.HOURLY_RATE}/hour, {Config.PREPAYMENT_PERCENTAGE}% upfront "
+            f"before work begins. A detailed estimate will follow once we agree on scope.\n\n"
             f"Before I submit my detailed proposal, I have a few questions:\n\n"
             f"{q_text}\n\n"
             f"Looking forward to your answers!"
