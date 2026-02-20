@@ -239,8 +239,10 @@ Rules:
 - Highlight relevant experience with the required tech stack
 - Mention proposed timeline
 - Include payment terms: {self._get_prepayment_percentage()}% upfront before work begins
+- IMPORTANT: Include an invitation to continue detailed discussion via email: {me['email']}
+  Example: "For detailed project discussion, feel free to reach me directly at {me['email']}"
 - End with invitation to discuss
-- Sign off with: {me['name']}, {me['company']} | {me['website']}
+- Sign off with: {me['name']}, {me['company']} | {me['website']} | {me['email']}
 
 Return JSON:
 {{

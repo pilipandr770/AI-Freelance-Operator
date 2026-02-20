@@ -30,6 +30,12 @@ class BackgroundScheduler:
         print("Stopping background scheduler...")
         self.workflow_engine.stop()
         self.mail_worker.stop()
+        # Close Selenium browser if it was used
+        try:
+            from app.freelancer_client import _shutdown_client
+            _shutdown_client()
+        except Exception:
+            pass
         # Threads are daemon, they will stop with main process
 
     def _run_workflow_loop(self):

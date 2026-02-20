@@ -200,7 +200,14 @@ class FreelancerClient:
                 amount_field = self._wait.until(
                     EC.presence_of_element_located((By.ID, "bidAmountInput"))
                 )
-                ActionChains(self._driver).triple_click(amount_field).perform()
+                amount_field.click()
+                amount_field.clear()
+                time.sleep(0.2)
+                # Fallback: select-all + delete if clear() didn't work
+                from selenium.webdriver.common.keys import Keys
+                amount_field.send_keys(Keys.CONTROL, 'a')
+                amount_field.send_keys(Keys.DELETE)
+                time.sleep(0.2)
                 amount_field.send_keys(str(int(amount)))
                 log.info("[FreelancerClient] Amount set: %s", amount)
                 time.sleep(0.5)
@@ -211,7 +218,13 @@ class FreelancerClient:
             # ── 2. Delivery period ──
             try:
                 period_field = self._driver.find_element(By.ID, "periodInput")
-                ActionChains(self._driver).triple_click(period_field).perform()
+                period_field.click()
+                period_field.clear()
+                time.sleep(0.2)
+                from selenium.webdriver.common.keys import Keys as _Keys
+                period_field.send_keys(_Keys.CONTROL, 'a')
+                period_field.send_keys(_Keys.DELETE)
+                time.sleep(0.2)
                 period_field.send_keys(str(days))
                 time.sleep(0.3)
             except Exception:
@@ -354,4 +367,15 @@ def get_freelancer_client() -> FreelancerClient:
     global _client
     if _client is None:
         _client = FreelancerClient()
+        # Register atexit hook so browser is always closed on process exit
+        import atexit
+        atexit.register(_shutdown_client)
     return _client
+
+
+def _shutdown_client():
+    """Atexit hook — close the browser gracefully."""
+    global _client
+    if _client is not None:
+        _client.shutdown()
+        _client = None
