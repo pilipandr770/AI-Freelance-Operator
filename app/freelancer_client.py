@@ -185,7 +185,50 @@ class FreelancerClient:
         """Thread-safe bid submission (called under lock)."""
         from selenium.webdriver.common.by import By
         from selenium.webdriver.support import expected_conditions as EC
-        from selenium.webdriver.common.action_chains import ActionChains
+        from selenium.webdriver.common.keys import Keys
+        from selenium.common.exceptions import StaleElementReferenceException
+
+        def _find_fresh(by, value, timeout=15):
+            """Find element with retry on stale reference."""
+            from selenium.webdriver.support.ui import WebDriverWait
+            for attempt in range(3):
+                try:
+                    el = WebDriverWait(self._driver, timeout).until(
+                        EC.presence_of_element_located((by, value))
+                    )
+                    # Force a read to check if element is still attached
+                    _ = el.tag_name
+                    return el
+                except StaleElementReferenceException:
+                    log.debug("[FreelancerClient] Stale element, retry %d: %s", attempt + 1, value)
+                    time.sleep(1)
+            raise StaleElementReferenceException(f"Element still stale after 3 retries: {value}")
+
+        def _clear_and_type(by, value, text_to_type):
+            """Find element fresh, clear it, and type text. Retries on stale."""
+            for attempt in range(3):
+                try:
+                    el = _find_fresh(by, value)
+                    self._driver.execute_script(
+                        "arguments[0].scrollIntoView({block:'center'}); arguments[0].click();",
+                        el
+                    )
+                    time.sleep(0.3)
+                    # Re-find after scroll (DOM may re-render)
+                    el = _find_fresh(by, value, timeout=5)
+                    el.clear()
+                    time.sleep(0.2)
+                    el.send_keys(Keys.CONTROL, 'a')
+                    el.send_keys(Keys.DELETE)
+                    time.sleep(0.2)
+                    # Re-find once more before typing
+                    el = _find_fresh(by, value, timeout=5)
+                    el.send_keys(str(text_to_type))
+                    return True
+                except StaleElementReferenceException:
+                    log.debug("[FreelancerClient] Stale in clear_and_type, retry %d", attempt + 1)
+                    time.sleep(1)
+            return False
 
         try:
             if not self._ensure_logged_in():
@@ -195,71 +238,76 @@ class FreelancerClient:
             self._driver.get(project_url)
             time.sleep(random.uniform(3, 5))
 
+            # Wait for page to fully load (bid form or project content)
+            try:
+                self._wait.until(lambda d: d.execute_script("return document.readyState") == "complete")
+                time.sleep(1)
+            except Exception:
+                pass
+
             # ── 1. Bid amount ──
             try:
-                amount_field = self._wait.until(
-                    EC.presence_of_element_located((By.ID, "bidAmountInput"))
-                )
-                amount_field.click()
-                amount_field.clear()
-                time.sleep(0.2)
-                # Fallback: select-all + delete if clear() didn't work
-                from selenium.webdriver.common.keys import Keys
-                amount_field.send_keys(Keys.CONTROL, 'a')
-                amount_field.send_keys(Keys.DELETE)
-                time.sleep(0.2)
-                amount_field.send_keys(str(int(amount)))
-                log.info("[FreelancerClient] Amount set: %s", amount)
-                time.sleep(0.5)
+                if _clear_and_type(By.ID, "bidAmountInput", int(amount)):
+                    log.info("[FreelancerClient] Amount set: %s", amount)
+                    time.sleep(0.5)
             except Exception as e:
                 log.warning("[FreelancerClient] Amount field not found: %s", e)
-                # Some projects have different form structure; continue anyway
 
             # ── 2. Delivery period ──
             try:
-                period_field = self._driver.find_element(By.ID, "periodInput")
-                period_field.click()
-                period_field.clear()
-                time.sleep(0.2)
-                from selenium.webdriver.common.keys import Keys as _Keys
-                period_field.send_keys(_Keys.CONTROL, 'a')
-                period_field.send_keys(_Keys.DELETE)
-                time.sleep(0.2)
-                period_field.send_keys(str(days))
-                time.sleep(0.3)
+                if _clear_and_type(By.ID, "periodInput", days):
+                    time.sleep(0.3)
             except Exception:
                 log.debug("[FreelancerClient] Period field not found, skipping")
 
             # ── 3. Proposal text ──
-            desc_field = self._wait.until(
-                EC.presence_of_element_located((By.ID, "descriptionTextArea"))
-            )
-            desc_field.click()
-            time.sleep(0.5)
-
-            # Ensure minimum 120 chars (freelancer requirement)
             text = proposal_text
             if len(text) < 120:
                 text += "\n\nI look forward to discussing the project details with you."
 
+            desc_field = _find_fresh(By.ID, "descriptionTextArea")
+            self._driver.execute_script(
+                "arguments[0].scrollIntoView({block:'center'}); arguments[0].click();",
+                desc_field
+            )
+            time.sleep(0.5)
+            # Re-find after scroll
+            desc_field = _find_fresh(By.ID, "descriptionTextArea", timeout=5)
             self._human_type(desc_field, text)
             log.info("[FreelancerClient] Proposal text entered (%d chars)", len(text))
             time.sleep(1)
 
             # ── 4. Submit button ──
-            submit_btn = self._wait.until(
-                EC.element_to_be_clickable((
-                    By.CSS_SELECTOR,
-                    "fl-button[fltrackinglabel='PlaceBidButton'] button, "
-                    "button.submit-btn, "
-                    "button[data-bid-submit], "
-                    "button.BidForm-submit"
-                ))
-            )
-            self._driver.execute_script("arguments[0].scrollIntoView(true);", submit_btn)
-            time.sleep(0.5)
-            submit_btn.click()
-            time.sleep(random.uniform(3, 5))
+            submit_selectors = [
+                "fl-button[fltrackinglabel='PlaceBidButton'] button",
+                "button.submit-btn",
+                "button[data-bid-submit]",
+                "button.BidForm-submit",
+            ]
+            submit_btn = None
+            for sel in submit_selectors:
+                try:
+                    submit_btn = _find_fresh(By.CSS_SELECTOR, sel, timeout=5)
+                    break
+                except Exception:
+                    continue
+
+            if submit_btn:
+                self._driver.execute_script(
+                    "arguments[0].scrollIntoView({block:'center'});", submit_btn
+                )
+                time.sleep(0.5)
+                # Re-find before click to avoid stale
+                for sel in submit_selectors:
+                    try:
+                        submit_btn = _find_fresh(By.CSS_SELECTOR, sel, timeout=3)
+                        submit_btn.click()
+                        break
+                    except StaleElementReferenceException:
+                        continue
+                time.sleep(random.uniform(3, 5))
+            else:
+                return False, "Submit button not found"
 
             # ── 5. Verify success ──
             success = self._check_bid_success()
@@ -272,7 +320,6 @@ class FreelancerClient:
             else:
                 msg = "Bid form submitted but success not confirmed"
                 log.warning("[FreelancerClient] %s", msg)
-                # Still mark as submitted to avoid duplicates
                 self._submitted.add(project_url)
                 self._save_submitted()
                 return True, msg
