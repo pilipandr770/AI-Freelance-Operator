@@ -96,9 +96,10 @@ class MailWorker:
             self._imap_failed = False  # reset on success
 
             # Only fetch emails from last 7 days to avoid processing ancient mail
+            # Use SINCE (not UNSEEN) — emails may be read in browser/phone
             from datetime import datetime, timedelta
             since_date = (datetime.now() - timedelta(days=7)).strftime('%d-%b-%Y')
-            status, messages = mail.search(None, f'(UNSEEN SINCE {since_date})')
+            status, messages = mail.search(None, f'(SINCE {since_date})')
             if status != 'OK':
                 mail.logout()
                 return
@@ -110,7 +111,9 @@ class MailWorker:
 
             # Limit to 20 emails per cycle to avoid overload
             msg_ids = msg_ids[:20]
-            print(f"[MailWorker] Processing {len(msg_ids)} new email(s)")
+
+            # Filter out already-processed emails by Message-ID
+            processed_ids = self._get_processed_message_ids()
 
             created = 0
             skipped = 0
@@ -119,12 +122,14 @@ class MailWorker:
                     status, msg_data = mail.fetch(msg_id, '(RFC822)')
                     if status == 'OK':
                         email_message = email.message_from_bytes(msg_data[0][1])
+                        mid = email_message.get('Message-ID', '')
+                        if mid and mid in processed_ids:
+                            continue  # already processed
                         was_created = self._handle_email(email_message)
                         if was_created:
                             created += 1
                         else:
                             skipped += 1
-                        mail.store(msg_id, '+FLAGS', '\\Seen')
                 except Exception as e:
                     print(f"[MailWorker] Error processing email {msg_id}: {e}")
 
@@ -136,6 +141,19 @@ class MailWorker:
             if not self._imap_failed:
                 print(f"[MailWorker] IMAP error: {e}")
                 self._imap_failed = True
+
+    def _get_processed_message_ids(self):
+        """Get set of Message-IDs already stored in project_messages (last 7 days)."""
+        try:
+            with Database.get_cursor() as cursor:
+                cursor.execute("""
+                    SELECT message_id FROM project_messages
+                    WHERE message_id IS NOT NULL
+                      AND created_at > NOW() - INTERVAL '7 days'
+                """)
+                return {row['message_id'] for row in cursor.fetchall()}
+        except Exception:
+            return set()
 
     @staticmethod
     def _is_bulk_email(email_message):
@@ -166,6 +184,11 @@ class MailWorker:
         email_match = re.search(r'<([^>]+)>', sender)
         client_email = email_match.group(1) if email_match else sender.strip()
 
+        # ── Freelancer.com digest: check BEFORE blocklist ──
+        # (digests come from noreply@notifications.freelancer.com)
+        if is_freelancer_digest(subject, body):
+            return self._handle_freelancer_digest(body, message_id)
+
         # ── DOMAIN FILTERING ──
         sender_local = client_email.split('@')[0].lower() if '@' in client_email else ''
         sender_domain = client_email.split('@')[-1].lower() if '@' in client_email else ''
@@ -180,10 +203,6 @@ class MailWorker:
             if not any(sender_domain.endswith(d) for d in ALLOWED_SENDER_DOMAINS):
                 return False  # domain not in whitelist
         # If we reached here, the sender is allowed
-
-        # ── Freelancer.com digest: one email → multiple projects ──
-        if is_freelancer_digest(subject, body):
-            return self._handle_freelancer_digest(body, message_id)
 
         # Skip automated/bulk mail (only for non-whitelisted senders)
         if not is_whitelisted and self._is_bulk_email(email_message):

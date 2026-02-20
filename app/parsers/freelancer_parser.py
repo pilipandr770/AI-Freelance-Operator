@@ -15,21 +15,35 @@ from typing import List, Dict
 # ── Boilerplate patterns to strip ──
 _HEADER_PATTERNS = [
     re.compile(r'^.*?Hi\s+\w+.*?\n', re.IGNORECASE),
+    re.compile(r'^.*?Hallo\s+\w+.*?\n', re.IGNORECASE),
     re.compile(r'Here are the latest.*?\n', re.IGNORECASE),
+    re.compile(r'Hier sind die neuesten.*?\n', re.IGNORECASE),
     re.compile(r'We found.*?matching your skills.*?\n', re.IGNORECASE),
+    re.compile(r'Wir haben.*?passende.*?\n', re.IGNORECASE),
 ]
 
 _FOOTER_MARKERS = [
     'View more jobs',
+    'Mehr Jobs ansehen',
+    'Weitere Projekte',
     'Regards,',
+    'Mit freundlichen',
+    'Viele Grüße',
     'The Freelancer Team',
+    'Das Freelancer Team',
     'Freelancer.com',
     'Download Freelancer',
     'Get it on Google Play',
     'Download on the App Store',
+    'Im App Store laden',
+    'Bei Google Play laden',
     'Privacy Policy',
+    'Datenschutz',
     'Terms and Conditions',
+    'Nutzungsbedingungen',
     'Unsubscribe',
+    'Abmelden',
+    'Abbestellen',
     '\u00a9 20',   # © 20xx
     'Copyright 20',
     'facebook.com',
@@ -93,10 +107,13 @@ def strip_boilerplate(text: str) -> str:
 
 
 def is_freelancer_digest(subject: str, body: str) -> bool:
-    """Check if an email is a freelancer.com project digest."""
+    """Check if an email is a freelancer.com project digest (EN + DE)."""
     if not body:
         return False
-    has_projects_header = bool(re.search(r'={3,}\s*\n?\s*Projects\s*\n?\s*={3,}', body))
+    # Match both English "Projects" and German "Projekte"
+    has_projects_header = bool(re.search(
+        r'={3,}\s*\n?\s*(?:Projects|Projekte)\s*\n?\s*={3,}', body
+    ))
     has_urls = '/projects/' in body
     return has_projects_header and has_urls
 
@@ -112,8 +129,8 @@ def parse_digest(body: str) -> List[Dict]:
     if not body:
         return []
 
-    # Find the projects section (after ========\nProjects\n========)
-    match = re.search(r'={3,}\s*\n?\s*Projects\s*\n?\s*={3,}', body)
+    # Find the projects section (EN: Projects, DE: Projekte)
+    match = re.search(r'={3,}\s*\n?\s*(?:Projects|Projekte)\s*\n?\s*={3,}', body)
     if not match:
         return []
 
@@ -137,14 +154,15 @@ def parse_digest(body: str) -> List[Dict]:
     #   [text...]
     #   /projects/[category]/[slug].html?utm_...
 
-    # Find all project blocks using regex
+    # Find all project blocks using regex (EN + DE keywords)
+    # Skills → Fähigkeiten, Description → Beschreibung
     pattern = re.compile(
-        r'([^\n]+?)\n'                    # title (non-empty line before Budget)
-        r'Budget:\s*([^\n]+)\n'           # budget line
-        r'Skills:\s*([^\n]+)\n'           # skills line
-        r'Description:\s*\n'              # "Description:" header
-        r'([\s\S]+?)'                     # description text (non-greedy)
-        r'\n(/projects/[^\s\n]+)',         # URL starting with /projects/
+        r'([^\n]+?)\n'                              # title
+        r'Budget:\s*([^\n]+)\n'                     # budget line
+        r'(?:Skills|Fähigkeiten):\s*([^\n]+)\n'     # skills line (EN/DE)
+        r'(?:Description|Beschreibung):\s*\n'        # description header (EN/DE)
+        r'([\s\S]+?)'                               # description text
+        r'\n(/projects/[^\s\n]+)',                   # URL
     )
 
     projects = []
@@ -200,7 +218,8 @@ def _parse_budget(budget_str: str) -> tuple:
         '$250 - $750 USD'       → (250.0, 750.0, 'USD', False)
         '₹12500 INR'            → (12500.0, 12500.0, 'INR', False)
     """
-    is_hourly = '/hr' in budget_str.lower() or 'per hour' in budget_str.lower()
+    is_hourly = ('/hr' in budget_str.lower() or 'per hour' in budget_str.lower()
+                 or '/std' in budget_str.lower() or 'pro stunde' in budget_str.lower())
 
     # Detect currency
     if '€' in budget_str or 'EUR' in budget_str:
