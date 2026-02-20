@@ -259,6 +259,29 @@ class MailWorker:
                         if result:
                             return result['id']
 
+                # Method 3: Match freelancer.com projects by title
+                # (client from FL wrote to our email — project has no client_email yet)
+                if subject and client_email:
+                    clean_subject = re.sub(r'^(Re:\s*)+', '', subject, flags=re.IGNORECASE).strip()
+                    if clean_subject:
+                        cursor.execute("""
+                            SELECT id FROM projects
+                            WHERE source = 'freelancer.com'
+                              AND current_state NOT IN ('CLOSED', 'REJECTED')
+                              AND (client_email IS NULL OR client_email = '')
+                              AND title ILIKE %s
+                            ORDER BY updated_at DESC LIMIT 1
+                        """, (f'%{clean_subject}%',))
+                        result = cursor.fetchone()
+                        if result:
+                            # Link client email to this project
+                            cursor.execute("""
+                                UPDATE projects SET client_email = %s, updated_at = NOW()
+                                WHERE id = %s
+                            """, (client_email, result['id']))
+                            print(f"[MailWorker] Linked email {client_email} to FL project #{result['id']}")
+                            return result['id']
+
         except Exception as e:
             print(f"[MailWorker] Error finding existing project: {e}")
 
