@@ -364,6 +364,9 @@ class MailWorker:
         created = 0
         for proj in projects:
             try:
+                # Truncate title to 490 chars (DB column is VARCHAR(500))
+                proj['title'] = (proj['title'] or 'Untitled')[:490]
+
                 with Database.get_cursor() as cursor:
                     # Duplicate check: same title from freelancer.com in last 48h
                     cursor.execute("""

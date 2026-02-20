@@ -238,10 +238,35 @@ class FreelancerClient:
             self._driver.get(project_url)
             time.sleep(random.uniform(3, 5))
 
-            # Wait for page to fully load (bid form or project content)
+            # Wait for page to fully load
             try:
                 self._wait.until(lambda d: d.execute_script("return document.readyState") == "complete")
-                time.sleep(1)
+                time.sleep(2)
+            except Exception:
+                pass
+
+            # Check if project is still open / has bid form
+            page_text = self._driver.find_element(By.TAG_NAME, "body").text.lower()
+            if any(kw in page_text for kw in ['this project has been closed', 'project closed',
+                                                'this project has been awarded']):
+                return False, "Project is closed or already awarded"
+
+            # Some projects require clicking a "Place Bid" button first
+            try:
+                place_bid_btns = self._driver.find_elements(
+                    By.CSS_SELECTOR,
+                    "a[href*='placeBid'], button.PlaceBid, "
+                    "fl-button[fltrackinglabel='PlaceBidButton'], "
+                    "a.btn-place-bid, .place-bid-cta button"
+                )
+                for btn in place_bid_btns:
+                    if btn.is_displayed():
+                        self._driver.execute_script(
+                            "arguments[0].scrollIntoView({block:'center'}); arguments[0].click();",
+                            btn
+                        )
+                        time.sleep(2)
+                        break
             except Exception:
                 pass
 
@@ -265,15 +290,19 @@ class FreelancerClient:
             if len(text) < 120:
                 text += "\n\nI look forward to discussing the project details with you."
 
-            desc_field = _find_fresh(By.ID, "descriptionTextArea")
-            self._driver.execute_script(
-                "arguments[0].scrollIntoView({block:'center'}); arguments[0].click();",
-                desc_field
-            )
-            time.sleep(0.5)
-            # Re-find after scroll
-            desc_field = _find_fresh(By.ID, "descriptionTextArea", timeout=5)
-            self._human_type(desc_field, text)
+            try:
+                desc_field = _find_fresh(By.ID, "descriptionTextArea")
+                self._driver.execute_script(
+                    "arguments[0].scrollIntoView({block:'center'}); arguments[0].click();",
+                    desc_field
+                )
+                time.sleep(0.5)
+                # Re-find after scroll
+                desc_field = _find_fresh(By.ID, "descriptionTextArea", timeout=5)
+                self._human_type(desc_field, text)
+            except (StaleElementReferenceException, Exception) as e:
+                log.warning("[FreelancerClient] Normal typing failed (%s), using JS fallback", e.__class__.__name__)
+                self._js_set_value("descriptionTextArea", text)
             log.info("[FreelancerClient] Proposal text entered (%d chars)", len(text))
             time.sleep(1)
 
@@ -376,10 +405,61 @@ class FreelancerClient:
     # ──────────── Helpers ────────────
 
     def _human_type(self, element, text: str):
-        """Type text with random delays to simulate human input."""
-        for char in text:
-            element.send_keys(char)
-            time.sleep(random.uniform(0.02, 0.08))
+        """Type text with random delays to simulate human input.
+        Falls back to JS-based input if element goes stale."""
+        from selenium.common.exceptions import StaleElementReferenceException
+        try:
+            # Fast approach: type in chunks of 5-15 chars to mimic human speed
+            # but avoid stale element issues from char-by-char typing
+            i = 0
+            while i < len(text):
+                chunk_size = random.randint(5, 15)
+                chunk = text[i:i + chunk_size]
+                try:
+                    element.send_keys(chunk)
+                except StaleElementReferenceException:
+                    log.warning("[FreelancerClient] Stale in _human_type at pos %d, using JS fallback", i)
+                    remaining = text[i:]
+                    self._js_set_value(element, remaining)
+                    return
+                i += chunk_size
+                time.sleep(random.uniform(0.05, 0.15))
+        except StaleElementReferenceException:
+            log.warning("[FreelancerClient] Stale in _human_type, using JS fallback")
+            self._js_set_value(element, text)
+
+    def _js_set_value(self, element_or_id, text: str):
+        """Set textarea value via JavaScript (stale-proof fallback)."""
+        if isinstance(element_or_id, str):
+            # Use element ID
+            self._driver.execute_script("""
+                var el = document.getElementById(arguments[0]);
+                if (el) {
+                    el.focus();
+                    el.value = arguments[1];
+                    el.dispatchEvent(new Event('input', {bubbles: true}));
+                    el.dispatchEvent(new Event('change', {bubbles: true}));
+                }
+            """, element_or_id, text)
+        else:
+            try:
+                self._driver.execute_script("""
+                    arguments[0].focus();
+                    arguments[0].value = arguments[1];
+                    arguments[0].dispatchEvent(new Event('input', {bubbles: true}));
+                    arguments[0].dispatchEvent(new Event('change', {bubbles: true}));
+                """, element_or_id, text)
+            except Exception:
+                # Last resort: find by ID
+                self._driver.execute_script("""
+                    var el = document.getElementById('descriptionTextArea');
+                    if (el) {
+                        el.focus();
+                        el.value = arguments[0];
+                        el.dispatchEvent(new Event('input', {bubbles: true}));
+                        el.dispatchEvent(new Event('change', {bubbles: true}));
+                    }
+                """, text)
 
     def _load_submitted(self):
         """Load previously submitted URLs from file."""

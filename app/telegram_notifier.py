@@ -6,6 +6,8 @@ All methods are fire-and-forget: errors are logged but never raised,
 so a Telegram outage can never break the main workflow.
 """
 import json
+import time
+import threading
 import requests
 from config import Config
 
@@ -39,29 +41,62 @@ class TelegramNotifier:
         self.token = Config.TELEGRAM_BOT_TOKEN
         self.chat_id = Config.TELEGRAM_OWNER_ID
         self._enabled = bool(self.token and self.chat_id)
+        self._lock = threading.Lock()
+        self._last_send = 0.0  # timestamp of last successful send
+        self._MIN_INTERVAL = 0.5  # min seconds between messages
         if not self._enabled:
             print("[Telegram] Bot token or owner ID not configured — notifications disabled")
 
     # ───────── low-level ─────────
 
     def send(self, text: str, parse_mode: str = 'HTML') -> bool:
-        """Send a raw message. Returns True on success."""
+        """Send a raw message with rate-limit handling. Returns True on success."""
         if not self._enabled:
             return False
-        try:
-            url = _BASE_URL.format(token=self.token)
-            resp = requests.post(url, json={
-                'chat_id': self.chat_id,
-                'text': text[:4096],  # Telegram limit
-                'parse_mode': parse_mode,
-                'disable_web_page_preview': True,
-            }, timeout=10)
-            if resp.status_code != 200:
-                print(f"[Telegram] API error {resp.status_code}: {resp.text[:200]}")
-                return False
-            return True
-        except Exception as e:
-            print(f"[Telegram] Send error: {e}")
+
+        with self._lock:
+            # Enforce minimum interval between sends
+            elapsed = time.time() - self._last_send
+            if elapsed < self._MIN_INTERVAL:
+                time.sleep(self._MIN_INTERVAL - elapsed)
+
+            for attempt in range(3):
+                try:
+                    url = _BASE_URL.format(token=self.token)
+                    resp = requests.post(url, json={
+                        'chat_id': self.chat_id,
+                        'text': text[:4096],
+                        'parse_mode': parse_mode,
+                        'disable_web_page_preview': True,
+                    }, timeout=10)
+
+                    if resp.status_code == 200:
+                        self._last_send = time.time()
+                        return True
+
+                    if resp.status_code == 429:
+                        # Rate limited — extract retry_after
+                        try:
+                            data = resp.json()
+                            wait = data.get('parameters', {}).get('retry_after', 30)
+                        except Exception:
+                            wait = 30
+                        # Cap wait at 60 seconds; skip message if too long
+                        if wait > 60:
+                            print(f"[Telegram] Rate limited for {wait}s — dropping message")
+                            self._last_send = time.time()
+                            return False
+                        print(f"[Telegram] Rate limited, waiting {wait}s (attempt {attempt+1})")
+                        time.sleep(wait)
+                        continue
+
+                    print(f"[Telegram] API error {resp.status_code}: {resp.text[:200]}")
+                    return False
+
+                except Exception as e:
+                    print(f"[Telegram] Send error: {e}")
+                    return False
+
             return False
 
     # ───────── high-level event methods ─────────
