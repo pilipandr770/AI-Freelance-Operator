@@ -27,7 +27,7 @@ class EmailSender:
                    Config.SMTP_PASSWORD
         return username, password
 
-    def send_email(self, to_email, subject, body, html_body=None, from_name="AI Freelance Operator"):
+    def send_email(self, to_email, subject, body, html_body=None, from_name=None):
         """
         Send an email.
         
@@ -36,11 +36,14 @@ class EmailSender:
             subject: Email subject
             body: Plain text body
             html_body: Optional HTML body
-            from_name: Display name of sender
+            from_name: Display name of sender (defaults to BUSINESS_OWNER + BUSINESS_NAME)
             
         Returns:
             bool: True if sent successfully
         """
+        if from_name is None:
+            # Use business identity: "Andrii Pylypchuk | AndriiIT"
+            from_name = f"{Config.BUSINESS_OWNER} | {Config.BUSINESS_NAME}" if Config.BUSINESS_OWNER else Config.BUSINESS_NAME
         username, password = self._get_credentials()
 
         if not username or not password:
